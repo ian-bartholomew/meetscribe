@@ -17,10 +17,36 @@ A TUI app for recording, transcribing, and summarizing meetings.
 - [BlackHole](https://existential.audio/blackhole/) audio driver installed
 - [Ollama](https://ollama.ai/) and/or [LM Studio](https://lmstudio.ai/) for summarization
 
+### BlackHole Setup
+
+BlackHole is a virtual audio driver that lets Meetscribe capture system audio (e.g., Zoom calls).
+
+1. Install BlackHole:
+
+   ```bash
+   brew install blackhole-2ch
+   ```
+
+2. Open **Audio MIDI Setup** (search Spotlight or find it in `/Applications/Utilities/`)
+
+3. Click the **+** button at the bottom-left and select **Create Multi-Output Device**
+
+4. Check both your normal output (speakers/headphones) **and** **BlackHole 2ch**
+
+5. In **System Settings > Sound > Output**, select the new **Multi-Output Device** as your output
+
+This routes audio to both your speakers and BlackHole simultaneously, so Meetscribe can record while you still hear the meeting.
+
 ## Install
 
 ```bash
 pip install -e .
+```
+
+Or install globally with pipx:
+
+```bash
+pipx install -e /path/to/meetscribe --python python3.13
 ```
 
 ## Usage
