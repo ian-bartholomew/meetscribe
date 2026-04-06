@@ -77,10 +77,10 @@ class RecordingScreen(Screen):
         self.query_one("#start-btn", Button).disabled = True
         self.query_one("#stop-btn", Button).disabled = False
 
-        self._update_timer()
+        self._refresh_recording_display()
 
     @work(exclusive=True)
-    async def _update_timer(self) -> None:
+    async def _refresh_recording_display(self) -> None:
         """Periodically update the timer and level display."""
         import asyncio
         while self._recording_active:
