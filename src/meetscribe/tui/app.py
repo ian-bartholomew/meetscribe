@@ -35,8 +35,12 @@ class MeetscribeApp(App):
         self.config = load_config()
 
     def on_mount(self) -> None:
-        from meetscribe.tui.screens.home import HomeScreen
-        self.push_screen(HomeScreen())
+        if not self.config.vault.root:
+            from meetscribe.tui.screens.setup import SetupScreen
+            self.push_screen(SetupScreen())
+        else:
+            from meetscribe.tui.screens.home import HomeScreen
+            self.push_screen(HomeScreen())
 
     def action_open_settings(self) -> None:
         from meetscribe.tui.screens.settings import SettingsScreen
