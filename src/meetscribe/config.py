@@ -18,7 +18,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 @dataclass
 class AudioConfig:
     device_name: str = "BlackHole 2ch"
-    sample_rate: int = 44100
+    sample_rate: int = 48000
     channels: int = 2
 
 

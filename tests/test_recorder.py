@@ -32,7 +32,7 @@ class TestAudioRecorder:
         recorder = AudioRecorder(
             output_path=out,
             device_name="BlackHole 2ch",
-            sample_rate=44100,
+            sample_rate=48000,
             channels=2,
         )
         assert recorder.output_path == out
@@ -42,7 +42,7 @@ class TestAudioRecorder:
         recorder = AudioRecorder(
             output_path=out,
             device_name="BlackHole 2ch",
-            sample_rate=44100,
+            sample_rate=48000,
             channels=2,
         )
         assert recorder.is_recording is False
@@ -52,7 +52,7 @@ class TestAudioRecorder:
         recorder = AudioRecorder(
             output_path=out,
             device_name="BlackHole 2ch",
-            sample_rate=44100,
+            sample_rate=48000,
             channels=2,
         )
         assert recorder.peak_level == 0.0

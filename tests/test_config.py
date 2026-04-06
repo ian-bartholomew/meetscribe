@@ -20,7 +20,7 @@ class TestDefaultConfig:
     def test_returns_config_with_defaults(self):
         cfg = default_config()
         assert cfg.audio.device_name == "BlackHole 2ch"
-        assert cfg.audio.sample_rate == 44100
+        assert cfg.audio.sample_rate == 48000
         assert cfg.audio.channels == 2
         assert cfg.transcription.default_model == "base"
         assert cfg.summarization.default_provider == "ollama"
