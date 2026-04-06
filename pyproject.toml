@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meetscribe"
+version = "0.1.0"
+description = "TUI app for recording, transcribing, and summarizing meetings"
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.79.0",
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.5.0",
+    "soundfile>=0.12.0",
+    "openai>=1.0.0",
+    "jinja2>=3.1.0",
+    "tomli>=2.0.0;python_version<'3.11'",
+    "tomli-w>=1.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.scripts]
+meetscribe = "meetscribe.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meetscribe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
