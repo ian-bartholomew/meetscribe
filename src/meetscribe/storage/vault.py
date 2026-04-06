@@ -28,7 +28,7 @@ def slugify(name: str) -> str:
 
 class MeetingStorage:
     def __init__(self, vault_root: str | Path, meetings_folder: str = "Meetings") -> None:
-        self.vault_root = Path(vault_root)
+        self.vault_root = Path(vault_root).expanduser()
         self.meetings_folder = meetings_folder
 
     @property
