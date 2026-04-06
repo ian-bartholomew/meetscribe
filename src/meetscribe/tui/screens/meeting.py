@@ -1,0 +1,292 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from textual import on, work
+from textual.app import ComposeResult
+from textual.containers import Vertical, Horizontal
+from textual.screen import Screen
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Label,
+    Markdown,
+    Select,
+    Static,
+    TabPane,
+    TabbedContent,
+    TextArea,
+)
+
+from meetscribe.storage.vault import MeetingInfo, MeetingStorage
+from meetscribe.transcription.whisper import AVAILABLE_MODELS
+
+
+class MeetingScreen(Screen):
+    """View and manage meeting artifacts: recording, transcript, summary, memos."""
+
+    BINDINGS = [
+        ("escape", "go_back", "Back"),
+    ]
+
+    def __init__(self, meeting: MeetingInfo) -> None:
+        super().__init__()
+        self.meeting = meeting
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static(f"Meeting: {self.meeting.name} ({self.meeting.date})", classes="title")
+
+        with TabbedContent("Recording", "Transcript", "Summary", "Memos"):
+            with TabPane("Recording", id="recording-tab"):
+                yield self._compose_recording_tab()
+            with TabPane("Transcript", id="transcript-tab"):
+                yield self._compose_transcript_tab()
+            with TabPane("Summary", id="summary-tab"):
+                yield self._compose_summary_tab()
+            with TabPane("Memos", id="memos-tab"):
+                yield self._compose_memos_tab()
+
+        yield Footer()
+
+    def _compose_recording_tab(self) -> Vertical:
+        recording_path = self.meeting.path / "recording.flac"
+        if recording_path.exists():
+            size_mb = recording_path.stat().st_size / (1024 * 1024)
+            info_text = f"Recording: {recording_path.name}\nSize: {size_mb:.1f} MB"
+        else:
+            info_text = "No recording found."
+        return Vertical(Label(info_text, id="recording-info"))
+
+    def _compose_transcript_tab(self) -> Vertical:
+        model_options = [(m, m) for m in AVAILABLE_MODELS]
+        config = self.app.config if hasattr(self, "app") and self.app else None
+        default_model = config.transcription.default_model if config else "base"
+
+        return Vertical(
+            Horizontal(
+                Select(model_options, value=default_model, id="whisper-model"),
+                Button("Transcribe", id="transcribe-btn", variant="primary"),
+                Button("Regenerate", id="regenerate-transcript-btn"),
+            ),
+            Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
+        )
+
+    def _compose_summary_tab(self) -> Vertical:
+        return Vertical(
+            Horizontal(
+                Select([], id="template-select", prompt="Select template"),
+                Select([], id="provider-select", prompt="Select provider"),
+                Select([], id="llm-model-select", prompt="Select model"),
+            ),
+            Horizontal(
+                Button("Summarize", id="summarize-btn", variant="primary"),
+                Button("Regenerate", id="regenerate-summary-btn"),
+                Button("Refresh Models", id="refresh-models-btn"),
+            ),
+            Markdown("*No summary yet. Select a template and model, then click Summarize.*", id="summary-view"),
+        )
+
+    def _compose_memos_tab(self) -> Vertical:
+        return Vertical(
+            TextArea(id="memos-editor"),
+            Button("Save Memos", id="save-memos-btn", variant="primary"),
+        )
+
+    def on_mount(self) -> None:
+        self._load_existing_transcript()
+        self._load_existing_summary()
+        self._load_memos()
+        self._populate_templates()
+        self._populate_providers()
+
+    def _load_existing_transcript(self) -> None:
+        """Load the most recent transcript if one exists."""
+        for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
+            content = f.read_text()
+            self.query_one("#transcript-view", Markdown).update(content)
+            break
+
+    def _load_existing_summary(self) -> None:
+        """Load the most recent summary if one exists."""
+        for f in sorted(self.meeting.path.glob("summary-*.md"), reverse=True):
+            content = f.read_text()
+            self.query_one("#summary-view", Markdown).update(content)
+            break
+
+    def _load_memos(self) -> None:
+        memos_path = self.meeting.path / "memos.md"
+        if memos_path.exists():
+            self.query_one("#memos-editor", TextArea).load_text(memos_path.read_text())
+
+    def _populate_templates(self) -> None:
+        from meetscribe.templates.engine import TemplateEngine
+        # Look for templates in the package templates dir
+        templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
+        if not templates_dir.exists():
+            templates_dir = Path(__file__).parent.parent.parent / "templates"
+        engine = TemplateEngine(templates_dir)
+        names = engine.list_templates()
+        if names:
+            options = [(n, n) for n in names]
+            self.query_one("#template-select", Select).set_options(options)
+
+    def _populate_providers(self) -> None:
+        config = self.app.config
+        provider_options = [(k, k) for k in config.summarization.endpoints]
+        self.query_one("#provider-select", Select).set_options(provider_options)
+
+    @on(Select.Changed, "#provider-select")
+    def on_provider_changed(self, event: Select.Changed) -> None:
+        """When provider changes, fetch available models."""
+        if event.value and event.value != Select.BLANK:
+            self._fetch_models(str(event.value))
+
+    @work(thread=True)
+    def _fetch_models(self, provider: str) -> None:
+        config = self.app.config
+        endpoint = config.summarization.endpoints.get(provider, "")
+        if not endpoint:
+            return
+        from meetscribe.summarization.provider import SummarizationProvider
+        p = SummarizationProvider(base_url=endpoint, model="")
+        models = p.list_models()
+        if models:
+            options = [(m, m) for m in models]
+            self.app.call_from_thread(
+                self.query_one("#llm-model-select", Select).set_options, options
+            )
+
+    @on(Button.Pressed, "#refresh-models-btn")
+    def refresh_models(self) -> None:
+        provider_select = self.query_one("#provider-select", Select)
+        if provider_select.value and provider_select.value != Select.BLANK:
+            self._fetch_models(str(provider_select.value))
+
+    @on(Button.Pressed, "#transcribe-btn")
+    @on(Button.Pressed, "#regenerate-transcript-btn")
+    def do_transcribe(self) -> None:
+        model_select = self.query_one("#whisper-model", Select)
+        model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
+        self._run_transcription(model_name)
+
+    @work(thread=True)
+    def _run_transcription(self, model_name: str) -> None:
+        self.app.call_from_thread(self.notify, f"Transcribing with {model_name}...")
+        config = self.app.config
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        recording_path = self.meeting.path / "recording.flac"
+
+        if not recording_path.exists():
+            self.app.call_from_thread(self.notify, "No recording found.", severity="error")
+            return
+
+        from meetscribe.transcription.whisper import transcribe_audio
+        transcript = transcribe_audio(
+            audio_path=recording_path,
+            model_name=model_name,
+            meeting_name=self.meeting.name,
+            meeting_date=str(self.meeting.date),
+        )
+
+        transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)
+        transcript_path.write_text(transcript)
+
+        self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
+        self.app.call_from_thread(self.notify, "Transcription complete!")
+
+    @on(Button.Pressed, "#summarize-btn")
+    @on(Button.Pressed, "#regenerate-summary-btn")
+    def do_summarize(self) -> None:
+        template_select = self.query_one("#template-select", Select)
+        provider_select = self.query_one("#provider-select", Select)
+        model_select = self.query_one("#llm-model-select", Select)
+
+        if template_select.value == Select.BLANK:
+            self.notify("Please select a template.", severity="error")
+            return
+        if provider_select.value == Select.BLANK:
+            self.notify("Please select a provider.", severity="error")
+            return
+        if model_select.value == Select.BLANK:
+            self.notify("Please select a model.", severity="error")
+            return
+
+        self._run_summarization(
+            template_name=str(template_select.value),
+            provider=str(provider_select.value),
+            model=str(model_select.value),
+        )
+
+    @work(thread=True)
+    def _run_summarization(self, template_name: str, provider: str, model: str) -> None:
+        self.app.call_from_thread(self.notify, f"Summarizing with {provider}/{model}...")
+        config = self.app.config
+
+        # Find the latest transcript
+        transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+        if not transcripts:
+            self.app.call_from_thread(self.notify, "No transcript found. Transcribe first.", severity="error")
+            return
+        transcript_text = transcripts[0].read_text()
+
+        # Load memos
+        memos_path = self.meeting.path / "memos.md"
+        memos_text = memos_path.read_text() if memos_path.exists() else ""
+
+        # Render template
+        from meetscribe.templates.engine import TemplateEngine
+        templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
+        if not templates_dir.exists():
+            templates_dir = Path(__file__).parent.parent.parent / "templates"
+        engine = TemplateEngine(templates_dir)
+
+        rendered = engine.render(
+            template_name=template_name,
+            transcript=transcript_text,
+            memos=memos_text,
+            meeting_name=self.meeting.name,
+            date=str(self.meeting.date),
+            duration="",
+        )
+
+        # Send to LLM
+        from meetscribe.summarization.provider import SummarizationProvider
+        endpoint = config.summarization.endpoints.get(provider, "")
+        llm = SummarizationProvider(base_url=endpoint, model=model)
+        summary = llm.summarize(
+            system_prompt="You are a meeting summarizer. Produce a clear, well-structured summary.",
+            user_prompt=rendered,
+        )
+
+        # Save
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        summary_path = storage.summary_path(self.meeting.name, self.meeting.date, template_name)
+
+        # Add frontmatter
+        full_summary = (
+            f"---\n"
+            f"meeting: {self.meeting.name}\n"
+            f"date: {self.meeting.date}\n"
+            f"template: {template_name}\n"
+            f"provider: {provider}\n"
+            f"model: {model}\n"
+            f"---\n\n"
+            f"{summary}"
+        )
+        summary_path.write_text(full_summary)
+
+        self.app.call_from_thread(self.query_one("#summary-view", Markdown).update, full_summary)
+        self.app.call_from_thread(self.notify, "Summary complete!")
+
+    @on(Button.Pressed, "#save-memos-btn")
+    def save_memos(self) -> None:
+        memos_text = self.query_one("#memos-editor", TextArea).text
+        memos_path = self.meeting.path / "memos.md"
+        memos_path.parent.mkdir(parents=True, exist_ok=True)
+        memos_path.write_text(memos_text)
+        self.notify("Memos saved.")
+
+    def action_go_back(self) -> None:
+        self.app.pop_screen()
