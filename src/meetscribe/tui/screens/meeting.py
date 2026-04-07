@@ -54,6 +54,21 @@ class MeetingScreen(Screen):
     #transcript-loading.visible, #summary-loading.visible {
         display: block;
     }
+
+    .controls-bar {
+        height: auto;
+        max-height: 3;
+        dock: top;
+    }
+
+    #transcript-view, #summary-view {
+        height: 1fr;
+        overflow-y: auto;
+    }
+
+    #memos-editor {
+        height: 1fr;
+    }
     """
 
     BINDINGS = [
@@ -118,6 +133,7 @@ class MeetingScreen(Screen):
                 Checkbox("Identify speakers", id="diarize-checkbox"),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
+                classes="controls-bar",
             ),
             LoadingIndicator(id="transcript-loading"),
             Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
@@ -129,11 +145,13 @@ class MeetingScreen(Screen):
                 Select([], id="template-select", prompt="Select template"),
                 Select([], id="provider-select", prompt="Select provider"),
                 Select([], id="llm-model-select", prompt="Select model"),
+                classes="controls-bar",
             ),
             Horizontal(
                 Button("Summarize", id="summarize-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-summary-btn"),
                 Button("Refresh Models", id="refresh-models-btn"),
+                classes="controls-bar",
             ),
             LoadingIndicator(id="summary-loading"),
             Markdown("*No summary yet. Select a template and model, then click Summarize.*", id="summary-view"),
