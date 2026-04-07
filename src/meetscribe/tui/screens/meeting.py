@@ -249,27 +249,34 @@ class MeetingScreen(Screen):
         finally:
             self.app.call_from_thread(self._hide_loading, "transcript-loading")
 
+    def _select_value(self, select: Select) -> str | None:
+        """Get a Select widget's value as a string, or None if unselected."""
+        val = select.value
+        if val is Select.BLANK or not isinstance(val, str):
+            return None
+        return val
+
     @on(Button.Pressed, "#summarize-btn")
     @on(Button.Pressed, "#regenerate-summary-btn")
     def do_summarize(self) -> None:
-        template_select = self.query_one("#template-select", Select)
-        provider_select = self.query_one("#provider-select", Select)
-        model_select = self.query_one("#llm-model-select", Select)
+        template = self._select_value(self.query_one("#template-select", Select))
+        provider = self._select_value(self.query_one("#provider-select", Select))
+        model = self._select_value(self.query_one("#llm-model-select", Select))
 
-        if not template_select.value or template_select.value == Select.BLANK:
+        if not template:
             self.notify("Please select a template.", severity="error")
             return
-        if not provider_select.value or provider_select.value == Select.BLANK:
+        if not provider:
             self.notify("Please select a provider.", severity="error")
             return
-        if not model_select.value or model_select.value == Select.BLANK:
+        if not model:
             self.notify("Please select a model.", severity="error")
             return
 
         self._run_summarization(
-            template_name=str(template_select.value),
-            provider=str(provider_select.value),
-            model=str(model_select.value),
+            template_name=template,
+            provider=provider,
+            model=model,
         )
 
     @work(thread=True)
