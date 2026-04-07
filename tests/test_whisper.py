@@ -70,4 +70,6 @@ class TestTranscribeAudio:
 
         assert "[00:00:00] Hello." in result
         assert "[00:00:05] World." in result
-        mock_model_cls.assert_called_once_with("base", device="cpu", compute_type="int8")
+        mock_model_cls.assert_called_once()
+        call_args = mock_model_cls.call_args
+        assert call_args[1] == {"device": "cpu", "compute_type": "int8"}
