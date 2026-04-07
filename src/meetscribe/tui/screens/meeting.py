@@ -235,18 +235,31 @@ class MeetingScreen(Screen):
         try:
             log.info("Starting transcription: %s with model %s, diarize=%s", recording_path, model_name, enable_diarization)
             from meetscribe.transcription.whisper import transcribe_audio
+
+            # Stream segments to the UI as they arrive
+            live_lines: list[str] = []
+
+            def on_segment(idx: int, timestamp: str, text: str) -> None:
+                live_lines.append(f"[{timestamp}] {text}\n")
+                preview = "\n".join(live_lines)
+                self.app.call_from_thread(
+                    self.query_one("#transcript-view", Markdown).update, preview
+                )
+
             transcript = transcribe_audio(
                 audio_path=recording_path,
                 model_name=model_name,
                 meeting_name=self.meeting.name,
                 meeting_date=str(self.meeting.date),
                 enable_diarization=enable_diarization,
+                on_segment=on_segment,
             )
 
             transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)
             transcript_path.write_text(transcript)
             log.info("Transcription saved to %s", transcript_path)
 
+            # Final update with full formatted transcript (includes frontmatter + diarization)
             self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
             self.app.call_from_thread(self.notify, "Transcription complete!")
         except Exception:

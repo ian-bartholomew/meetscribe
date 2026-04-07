@@ -99,6 +99,16 @@ def _format_duration(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def _load_model(model_name: str) -> WhisperModel:
+    """Load a WhisperModel, preferring the cached path."""
+    cached_path = _find_cached_model(model_name)
+    if cached_path:
+        log.info("Using cached model at %s", cached_path)
+        return WhisperModel(cached_path, device="cpu", compute_type="int8")
+    log.info("Model not cached, downloading %s (this may take a minute)...", model_name)
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
+
+
 def transcribe_audio(
     audio_path: Path,
     model_name: str,
@@ -106,19 +116,26 @@ def transcribe_audio(
     meeting_date: str,
     enable_diarization: bool = False,
     num_speakers: int | None = None,
+    on_segment: callable | None = None,
 ) -> str:
-    """Transcribe an audio file and return formatted markdown transcript."""
-    # Try cached path first to avoid tqdm crash in Textual worker threads
-    cached_path = _find_cached_model(model_name)
-    if cached_path:
-        log.info("Using cached model at %s", cached_path)
-        model = WhisperModel(cached_path, device="cpu", compute_type="int8")
-    else:
-        log.info("Model not cached, downloading %s (this may take a minute)...", model_name)
-        model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    """Transcribe an audio file and return formatted markdown transcript.
+
+    Args:
+        on_segment: Optional callback called with (segment_index, timestamp, text)
+                    after each segment is transcribed. Use for live UI updates.
+    """
+    model = _load_model(model_name)
 
     segments, info = model.transcribe(str(audio_path), beam_size=5, vad_filter=True, language="en")
-    segment_list = list(segments)
+
+    # Stream segments — call on_segment as each one arrives
+    segment_list: list = []
+    for segment in segments:
+        segment_list.append(segment)
+        if on_segment:
+            timestamp = format_timestamp(segment.start)
+            text = segment.text.strip()
+            on_segment(len(segment_list) - 1, timestamp, text)
 
     duration = _format_duration(info.duration)
 
