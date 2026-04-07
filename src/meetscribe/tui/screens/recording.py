@@ -62,6 +62,7 @@ class RecordingScreen(Screen):
             device_name=config.audio.device_name,
             sample_rate=config.audio.sample_rate,
             channels=config.audio.channels,
+            mic_device_name=config.audio.mic_device_name or None,
         )
 
         try:

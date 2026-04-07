@@ -29,8 +29,11 @@ class SettingsScreen(Screen):
             Label("Meetings Folder (relative to vault):"),
             Input(value=config.vault.meetings_folder, id="meetings-folder"),
 
-            Label("Audio Device Name:"),
+            Label("System Audio Device (e.g. BlackHole 2ch):"),
             Input(value=config.audio.device_name, id="device-name"),
+
+            Label("Microphone Device (blank to disable):"),
+            Input(value=config.audio.mic_device_name, id="mic-device-name"),
 
             Label("Sample Rate:"),
             Input(value=str(config.audio.sample_rate), id="sample-rate"),
@@ -72,6 +75,7 @@ class SettingsScreen(Screen):
         config.vault.root = self.query_one("#vault-root", Input).value
         config.vault.meetings_folder = self.query_one("#meetings-folder", Input).value
         config.audio.device_name = self.query_one("#device-name", Input).value
+        config.audio.mic_device_name = self.query_one("#mic-device-name", Input).value
         config.audio.sample_rate = int(self.query_one("#sample-rate", Input).value)
         config.audio.channels = int(self.query_one("#channels", Input).value)
 

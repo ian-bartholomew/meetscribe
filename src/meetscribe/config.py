@@ -18,6 +18,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 @dataclass
 class AudioConfig:
     device_name: str = "BlackHole 2ch"
+    mic_device_name: str = ""
     sample_rate: int = 48000
     channels: int = 2
 
@@ -63,6 +64,7 @@ def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
         },
         "audio": {
             "device_name": cfg.audio.device_name,
+            "mic_device_name": cfg.audio.mic_device_name,
             "sample_rate": cfg.audio.sample_rate,
             "channels": cfg.audio.channels,
         },
