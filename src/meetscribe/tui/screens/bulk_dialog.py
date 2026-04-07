@@ -35,7 +35,8 @@ class BulkProcessDialog(ModalScreen[BulkProcessConfig | None]):
     #bulk-dialog {
         width: 70;
         height: auto;
-        max-height: 22;
+        max-height: 80%;
+        overflow-y: auto;
         border: thick $accent;
         background: $surface;
         padding: 1 2;
