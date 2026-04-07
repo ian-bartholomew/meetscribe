@@ -124,11 +124,20 @@ def transcribe_audio(
         on_segment: Optional callback called with (segment_index, timestamp, text)
                     after each segment is transcribed. Use for live UI updates.
     """
-    model = _load_model(model_name)
+    import time as _time
+    t0 = _time.monotonic()
 
+    log.info("Loading model: %s", model_name)
+    model = _load_model(model_name)
+    log.info("Model loaded in %.1fs", _time.monotonic() - t0)
+
+    log.info("Starting transcription of %s", audio_path)
+    t1 = _time.monotonic()
     segments, info = model.transcribe(str(audio_path), beam_size=5, vad_filter=True, language="en")
+    log.info("Transcribe call returned (generator ready) in %.1fs", _time.monotonic() - t1)
 
     # Stream segments — call on_segment as each one arrives
+    log.info("Iterating segments...")
     segment_list: list = []
     for segment in segments:
         segment_list.append(segment)
@@ -136,8 +145,13 @@ def transcribe_audio(
             timestamp = format_timestamp(segment.start)
             text = segment.text.strip()
             on_segment(len(segment_list) - 1, timestamp, text)
+        if len(segment_list) % 50 == 0:
+            log.info("Transcribed %d segments so far (at %.1fs in audio)",
+                     len(segment_list), segment.end)
 
     duration = _format_duration(info.duration)
+    log.info("Transcription complete: %d segments, %s duration, took %.1fs",
+             len(segment_list), duration, _time.monotonic() - t0)
 
     speaker_labels = None
     if enable_diarization:
