@@ -50,6 +50,7 @@ class MeetscribeConfig:
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     summarization: SummarizationConfig = field(default_factory=SummarizationConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
+    log_level: str = "INFO"
 
 
 def default_config() -> MeetscribeConfig:
@@ -76,6 +77,7 @@ def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
             "default_model": cfg.summarization.default_model,
             "endpoints": cfg.summarization.endpoints,
         },
+        "log_level": cfg.log_level,
     }
 
 
@@ -94,6 +96,8 @@ def _dict_to_config(data: dict[str, Any]) -> MeetscribeConfig:
             default_model=s.get("default_model", cfg.summarization.default_model),
             endpoints=s.get("endpoints", cfg.summarization.endpoints),
         )
+    if "log_level" in data:
+        cfg.log_level = data["log_level"]
     return cfg
 
 
