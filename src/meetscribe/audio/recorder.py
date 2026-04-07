@@ -106,14 +106,11 @@ print("EXISTS")
 
 
 class AudioRecorder:
-    """Records audio to a FLAC file, optionally mixing multiple input devices.
+    """Records audio from a single input device to a FLAC file.
 
-    When mic_device_name is set, both devices feed into separate queues.
-    A writer thread reads from both, mixes frame-by-frame, and writes to disk.
-    This ensures no audio frames are dropped from either source.
+    For capturing both system audio and microphone, use a macOS
+    Aggregate Device that combines both sources at the OS level.
     """
-
-    BLOCKSIZE = 1024  # Fixed block size for both streams
 
     def __init__(
         self,
@@ -121,45 +118,26 @@ class AudioRecorder:
         device_name: str = "BlackHole 2ch",
         sample_rate: int = 48000,
         channels: int = 2,
-        mic_device_name: str | None = None,
+        mic_device_name: str | None = None,  # kept for config compat, unused
     ) -> None:
         self.output_path = output_path
         self.device_name = device_name
-        self.mic_device_name = mic_device_name
         self.sample_rate = sample_rate
         self.channels = channels
         self.is_recording = False
         self.peak_level = 0.0
-        self._sys_queue: queue.Queue[np.ndarray | None] = queue.Queue()
-        self._mic_queue: queue.Queue[np.ndarray | None] = queue.Queue()
+        self._queue: queue.Queue[np.ndarray | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._stream: sd.InputStream | None = None
-        self._mic_stream: sd.InputStream | None = None
 
-    def _sys_callback(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
-        """Called for each block of system audio data."""
+    def _audio_callback(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
+        """Called from the audio thread for each block of audio data."""
         self.peak_level = float(np.abs(indata).max())
-        self._sys_queue.put(indata.copy())
-
-    def _mic_callback(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
-        """Called for each block of microphone audio data."""
-        self._mic_queue.put(indata.copy())
-
-    def _ensure_channels(self, data: np.ndarray, target_channels: int) -> np.ndarray:
-        """Reshape audio data to match the target channel count."""
-        if data.ndim == 1:
-            data = data.reshape(-1, 1)
-        if data.shape[1] == target_channels:
-            return data
-        if data.shape[1] == 1 and target_channels == 2:
-            return np.column_stack([data[:, 0], data[:, 0]])
-        return data[:, :target_channels]
+        self._queue.put(indata.copy())
 
     def _writer_loop(self) -> None:
-        """Background thread that reads both queues, mixes, and writes to disk."""
+        """Background thread that drains the queue and writes to disk."""
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        has_mic = self._mic_stream is not None
-
         with sf.SoundFile(
             str(self.output_path),
             mode="w",
@@ -168,43 +146,10 @@ class AudioRecorder:
             format="FLAC",
         ) as f:
             while True:
-                # Read system audio (blocking — this drives the write rate)
-                sys_data = self._sys_queue.get()
-                if sys_data is None:
+                data = self._queue.get()
+                if data is None:
                     break
-
-                sys_data = self._ensure_channels(sys_data, self.channels)
-
-                if has_mic:
-                    # Drain all available mic blocks and concatenate
-                    mic_chunks: list[np.ndarray] = []
-                    while True:
-                        try:
-                            mic_block = self._mic_queue.get_nowait()
-                            if mic_block is None:
-                                break
-                            mic_chunks.append(self._ensure_channels(mic_block, self.channels))
-                        except queue.Empty:
-                            break
-
-                    if mic_chunks:
-                        mic_data = np.concatenate(mic_chunks, axis=0)
-                        # Align to system block length
-                        frames_needed = sys_data.shape[0]
-                        if mic_data.shape[0] >= frames_needed:
-                            mic_data = mic_data[:frames_needed]
-                        else:
-                            mic_data = np.pad(
-                                mic_data,
-                                ((0, frames_needed - mic_data.shape[0]), (0, 0)),
-                            )
-                        mixed = sys_data + mic_data
-                        np.clip(mixed, -1.0, 1.0, out=mixed)
-                        f.write(mixed)
-                    else:
-                        f.write(sys_data)
-                else:
-                    f.write(sys_data)
+                f.write(data)
 
     def start(self) -> None:
         """Begin recording."""
@@ -214,39 +159,21 @@ class AudioRecorder:
         device_info = get_device_info(self.device_name)
         device_index = device_info["index"]
 
-        # Auto-detect sample rate from the device
+        # Auto-detect sample rate and channels from the device
         self.sample_rate = int(device_info["default_samplerate"])
         self.channels = min(self.channels, device_info["max_input_channels"])
 
         self.is_recording = True
         self.peak_level = 0.0
 
-        # Start mic stream first if configured
-        if self.mic_device_name:
-            try:
-                mic_info = get_device_info(self.mic_device_name)
-                self._mic_stream = sd.InputStream(
-                    samplerate=self.sample_rate,
-                    device=mic_info["index"],
-                    channels=min(self.channels, mic_info["max_input_channels"]),
-                    blocksize=self.BLOCKSIZE,
-                    callback=self._mic_callback,
-                )
-                self._mic_stream.start()
-            except (ValueError, sd.PortAudioError):
-                self._mic_stream = None
-
-        # Start writer thread after mic is set up (it checks _mic_stream)
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
 
-        # Start main system audio stream
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             device=device_index,
             channels=self.channels,
-            blocksize=self.BLOCKSIZE,
-            callback=self._sys_callback,
+            callback=self._audio_callback,
         )
         self._stream.start()
 
@@ -261,14 +188,7 @@ class AudioRecorder:
             self._stream.close()
             self._stream = None
 
-        if self._mic_stream is not None:
-            self._mic_stream.stop()
-            self._mic_stream.close()
-            self._mic_stream = None
-
-        # Signal writer thread to finish
-        self._sys_queue.put(None)
-        self._mic_queue.put(None)
+        self._queue.put(None)  # Signal writer thread to finish
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             self._thread = None
