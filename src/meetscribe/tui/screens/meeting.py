@@ -7,6 +7,20 @@ from pathlib import Path
 from textual import on, work
 
 log = logging.getLogger("meetscribe.meeting")
+
+
+def _find_templates_dir() -> Path:
+    """Find the templates directory by walking up from this file."""
+    d = Path(__file__).resolve().parent
+    for _ in range(10):
+        candidate = d / "templates"
+        if candidate.exists() and any(candidate.glob("*.md")):
+            return candidate
+        d = d.parent
+    # Fallback
+    return Path(__file__).parent.parent.parent.parent / "templates"
+
+
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
@@ -126,10 +140,7 @@ class MeetingScreen(Screen):
 
     def _populate_templates(self) -> None:
         from meetscribe.templates.engine import TemplateEngine
-        # Look for templates in the package templates dir
-        templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
-        if not templates_dir.exists():
-            templates_dir = Path(__file__).parent.parent.parent / "templates"
+        templates_dir = _find_templates_dir()
         engine = TemplateEngine(templates_dir)
         names = engine.list_templates()
         if names:
@@ -214,13 +225,13 @@ class MeetingScreen(Screen):
         provider_select = self.query_one("#provider-select", Select)
         model_select = self.query_one("#llm-model-select", Select)
 
-        if template_select.value == Select.BLANK:
+        if not template_select.value or template_select.value == Select.BLANK:
             self.notify("Please select a template.", severity="error")
             return
-        if provider_select.value == Select.BLANK:
+        if not provider_select.value or provider_select.value == Select.BLANK:
             self.notify("Please select a provider.", severity="error")
             return
-        if model_select.value == Select.BLANK:
+        if not model_select.value or model_select.value == Select.BLANK:
             self.notify("Please select a model.", severity="error")
             return
 
@@ -251,9 +262,7 @@ class MeetingScreen(Screen):
 
             # Render template
             from meetscribe.templates.engine import TemplateEngine
-            templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
-            if not templates_dir.exists():
-                templates_dir = Path(__file__).parent.parent.parent / "templates"
+            templates_dir = _find_templates_dir()
             engine = TemplateEngine(templates_dir)
 
             rendered = engine.render(
