@@ -26,6 +26,7 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
 from textual.widgets import (
     Button,
+    Checkbox,
     Footer,
     Header,
     Label,
@@ -104,6 +105,7 @@ class MeetingScreen(Screen):
         return Vertical(
             Horizontal(
                 Select(model_options, value=default_model, id="whisper-model"),
+                Checkbox("Identify speakers", id="diarize-checkbox"),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
             ),
@@ -205,7 +207,8 @@ class MeetingScreen(Screen):
     def do_transcribe(self) -> None:
         model_select = self.query_one("#whisper-model", Select)
         model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
-        self._run_transcription(model_name)
+        diarize = self.query_one("#diarize-checkbox", Checkbox).value
+        self._run_transcription(model_name, diarize)
 
     def _show_loading(self, widget_id: str) -> None:
         self.query_one(f"#{widget_id}").add_class("visible")
@@ -214,9 +217,12 @@ class MeetingScreen(Screen):
         self.query_one(f"#{widget_id}").remove_class("visible")
 
     @work(thread=True)
-    def _run_transcription(self, model_name: str) -> None:
+    def _run_transcription(self, model_name: str, enable_diarization: bool = False) -> None:
         self.app.call_from_thread(self._show_loading, "transcript-loading")
-        self.app.call_from_thread(self.notify, f"Transcribing with {model_name}...")
+        label = f"Transcribing with {model_name}"
+        if enable_diarization:
+            label += " + speaker identification"
+        self.app.call_from_thread(self.notify, f"{label}...")
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
         recording_path = self._find_recording()
@@ -227,13 +233,14 @@ class MeetingScreen(Screen):
             return
 
         try:
-            log.info("Starting transcription: %s with model %s", recording_path, model_name)
+            log.info("Starting transcription: %s with model %s, diarize=%s", recording_path, model_name, enable_diarization)
             from meetscribe.transcription.whisper import transcribe_audio
             transcript = transcribe_audio(
                 audio_path=recording_path,
                 model_name=model_name,
                 meeting_name=self.meeting.name,
                 meeting_date=str(self.meeting.date),
+                enable_diarization=enable_diarization,
             )
 
             transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)

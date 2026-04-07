@@ -55,8 +55,13 @@ def format_transcript(
     meeting_date: str,
     model: str,
     duration: str,
+    speaker_labels: list[tuple[str, str]] | None = None,
 ) -> str:
-    """Format transcription segments into a markdown document with frontmatter."""
+    """Format transcription segments into a markdown document with frontmatter.
+
+    If speaker_labels is provided, uses (speaker, text) tuples instead of
+    raw segments for the body.
+    """
     lines = [
         "---",
         f"meeting: {meeting_name}",
@@ -66,11 +71,22 @@ def format_transcript(
         "---",
         "",
     ]
-    for segment in segments:
-        timestamp = format_timestamp(segment.start)
-        text = segment.text.strip()
-        lines.append(f"[{timestamp}] {text}")
-        lines.append("")
+
+    if speaker_labels:
+        prev_speaker = None
+        for i, (speaker, text) in enumerate(speaker_labels):
+            timestamp = format_timestamp(segments[i].start)
+            if speaker != prev_speaker:
+                lines.append(f"**{speaker}:**")
+                prev_speaker = speaker
+            lines.append(f"[{timestamp}] {text}")
+            lines.append("")
+    else:
+        for segment in segments:
+            timestamp = format_timestamp(segment.start)
+            text = segment.text.strip()
+            lines.append(f"[{timestamp}] {text}")
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -88,6 +104,8 @@ def transcribe_audio(
     model_name: str,
     meeting_name: str,
     meeting_date: str,
+    enable_diarization: bool = False,
+    num_speakers: int | None = None,
 ) -> str:
     """Transcribe an audio file and return formatted markdown transcript."""
     # Try cached path first to avoid tqdm crash in Textual worker threads
@@ -104,10 +122,19 @@ def transcribe_audio(
 
     duration = _format_duration(info.duration)
 
+    speaker_labels = None
+    if enable_diarization:
+        log.info("Running speaker diarization...")
+        from meetscribe.transcription.diarize import diarize, assign_speakers_to_transcript
+        speaker_segments = diarize(audio_path, num_speakers=num_speakers)
+        speaker_labels = assign_speakers_to_transcript(segment_list, speaker_segments)
+        log.info("Diarization complete")
+
     return format_transcript(
         segments=segment_list,
         meeting_name=meeting_name,
         meeting_date=meeting_date,
         model=model_name,
         duration=duration,
+        speaker_labels=speaker_labels,
     )
