@@ -228,6 +228,8 @@ class MeetingScreen(Screen):
 
     @work(thread=True)
     def _run_transcription(self, model_name: str, enable_diarization: bool = False) -> None:
+        import time as _time
+        t_start = _time.monotonic()
         self.app.call_from_thread(self._show_loading, "transcript-loading")
         label = f"Transcribing with {model_name}"
         if enable_diarization:
@@ -271,7 +273,9 @@ class MeetingScreen(Screen):
 
             # Final update with full formatted transcript (includes frontmatter + diarization)
             self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
-            self.app.call_from_thread(self.notify, "Transcription complete!")
+            elapsed = _time.monotonic() - t_start
+            m, s = divmod(int(elapsed), 60)
+            self.app.call_from_thread(self.notify, f"Transcription complete! ({m}m {s}s)")
         except Exception:
             log.exception("Transcription failed")
             msg = f"Transcription failed. See log: {self.app.log_file}"
@@ -311,6 +315,8 @@ class MeetingScreen(Screen):
 
     @work(thread=True)
     def _run_summarization(self, template_name: str, provider: str, model: str) -> None:
+        import time as _time
+        t_start = _time.monotonic()
         self.app.call_from_thread(self._show_loading, "summary-loading")
         self.app.call_from_thread(self.notify, f"Summarizing with {provider}/{model}...")
         config = self.app.config
@@ -375,7 +381,9 @@ class MeetingScreen(Screen):
             log.info("Summary saved to %s", summary_path)
 
             self.app.call_from_thread(self.query_one("#summary-view", Markdown).update, full_summary)
-            self.app.call_from_thread(self.notify, "Summary complete!")
+            elapsed = _time.monotonic() - t_start
+            m, s = divmod(int(elapsed), 60)
+            self.app.call_from_thread(self.notify, f"Summary complete! ({m}m {s}s)")
         except Exception:
             log.exception("Summarization failed")
             msg = f"Summarization failed. See log: {self.app.log_file}"
