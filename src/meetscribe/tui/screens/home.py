@@ -204,8 +204,11 @@ class HomeScreen(Screen):
 
         for i, meeting in enumerate(need_transcript):
             log.info("Bulk transcribing %d/%d: %s", i + 1, len(need_transcript), meeting.name)
+
+            # Get duration for progress display
+            duration_str = meeting.duration or "unknown length"
             self.app.call_from_thread(
-                self.notify, f"Transcribing {i+1}/{len(need_transcript)}: {meeting.name}..."
+                self.notify, f"Transcribing {i+1}/{len(need_transcript)}: {meeting.name} ({duration_str})..."
             )
             try:
                 # Find recording
@@ -223,6 +226,15 @@ class HomeScreen(Screen):
                 meta = load_metadata(meeting.path)
                 num_speakers = meta.get("num_speakers")
 
+                # Progress callback — show segment count as transcription streams
+                segment_count = [0]
+                def on_segment(idx, timestamp, text):
+                    segment_count[0] = idx + 1
+                    if segment_count[0] % 10 == 0:
+                        self.app.call_from_thread(
+                            self.notify, f"Transcribing {i+1}/{len(need_transcript)}: {meeting.name} — {segment_count[0]} segments..."
+                        )
+
                 transcript = transcribe_audio(
                     audio_path=recording_path,
                     model_name=model_name,
@@ -230,6 +242,7 @@ class HomeScreen(Screen):
                     meeting_date=str(meeting.date),
                     enable_diarization=bulk_config.enable_diarization and num_speakers is not None and num_speakers > 1,
                     num_speakers=num_speakers,
+                    on_segment=on_segment,
                 )
                 transcript_path = storage.transcript_path(meeting.name, meeting.date, model_name)
                 transcript_path.write_text(transcript)
