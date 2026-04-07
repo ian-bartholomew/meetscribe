@@ -126,14 +126,30 @@ class AudioRecorder:
         self.channels = channels
         self.is_recording = False
         self.peak_level = 0.0
+        self._output_channels = channels
         self._queue: queue.Queue[np.ndarray | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._stream: sd.InputStream | None = None
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
-        """Called from the audio thread for each block of audio data."""
-        self.peak_level = float(np.abs(indata).max())
-        self._queue.put(indata.copy())
+        """Called from the audio thread for each block of audio data.
+
+        If the device has more channels than we're writing (e.g. an Aggregate
+        Device with 5 inputs), downmix all channels to stereo so no source
+        is lost.
+        """
+        if indata.shape[1] > self._output_channels:
+            # Downmix: average all channels into stereo (L=even channels, R=odd channels)
+            # or simply average everything into mono then duplicate to stereo
+            mono = np.mean(indata, axis=1, keepdims=True)
+            if self._output_channels == 2:
+                block = np.column_stack([mono[:, 0], mono[:, 0]])
+            else:
+                block = mono
+        else:
+            block = indata.copy()
+        self.peak_level = float(np.abs(block).max())
+        self._queue.put(block)
 
     def _writer_loop(self) -> None:
         """Background thread that drains the queue and writes to disk."""
@@ -142,7 +158,7 @@ class AudioRecorder:
             str(self.output_path),
             mode="w",
             samplerate=self.sample_rate,
-            channels=self.channels,
+            channels=self._output_channels,
             format="FLAC",
         ) as f:
             while True:
@@ -159,9 +175,13 @@ class AudioRecorder:
         device_info = get_device_info(self.device_name)
         device_index = device_info["index"]
 
-        # Auto-detect sample rate and channels from the device
+        # Auto-detect sample rate from the device
         self.sample_rate = int(device_info["default_samplerate"])
-        self.channels = min(self.channels, device_info["max_input_channels"])
+
+        # Capture ALL device channels so we don't miss any audio source,
+        # but write a stereo (or configured channel count) file.
+        device_channels = device_info["max_input_channels"]
+        self._output_channels = min(self.channels, 2)
 
         self.is_recording = True
         self.peak_level = 0.0
@@ -172,7 +192,7 @@ class AudioRecorder:
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             device=device_index,
-            channels=self.channels,
+            channels=device_channels,
             callback=self._audio_callback,
         )
         self._stream.start()
