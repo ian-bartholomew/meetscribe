@@ -24,18 +24,15 @@ class MeetingListItem(ListItem):
         self.meeting = meeting
 
     def compose(self) -> ComposeResult:
-        icons = ""
-        if self.meeting.has_recording:
-            icons += "[R]"
+        tags: list[str] = []
         if self.meeting.has_transcript:
-            icons += "[T]"
+            tags.append("transcribed")
         if self.meeting.has_summary:
-            icons += "[S]"
-        if self.meeting.has_memos:
-            icons += "[M]"
+            tags.append("summarized")
+        status = f"  | {', '.join(tags)}" if tags else ""
         duration = f"  ({self.meeting.duration})" if self.meeting.duration else ""
         yield Label(
-            f"{self.meeting.date}  {self.meeting.name}{duration}  {icons}"
+            f"{self.meeting.date}  {self.meeting.name}{duration}{status}"
         )
 
 
