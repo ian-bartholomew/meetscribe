@@ -8,32 +8,12 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Header, Footer, Static, ListView, ListItem, Label, Input
+from textual.widgets import Button, DataTable, Header, Footer, Static, Input
 
 from meetscribe.config import load_config
 from meetscribe.storage.vault import MeetingStorage, MeetingInfo
 
 log = logging.getLogger("meetscribe.home")
-
-
-class MeetingListItem(ListItem):
-    """A single meeting entry in the list."""
-
-    def __init__(self, meeting: MeetingInfo) -> None:
-        super().__init__()
-        self.meeting = meeting
-
-    def compose(self) -> ComposeResult:
-        tags: list[str] = []
-        if self.meeting.has_transcript:
-            tags.append("transcribed")
-        if self.meeting.has_summary:
-            tags.append("summarized")
-        status = f"  | {', '.join(tags)}" if tags else ""
-        duration = f"  ({self.meeting.duration})" if self.meeting.duration else ""
-        yield Label(
-            f"{self.meeting.date}  {self.meeting.name}{duration}{status}"
-        )
 
 
 class HomeScreen(Screen):
@@ -47,6 +27,16 @@ class HomeScreen(Screen):
         ("s", "app.push_screen('settings')", "Settings"),
     ]
 
+    CSS = """
+    #meeting-table {
+        height: 1fr;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._meetings: list[MeetingInfo] = []
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Vertical(
@@ -55,12 +45,13 @@ class HomeScreen(Screen):
                 Button("New Recording", id="new-recording", variant="primary"),
                 Button("Import from Hyprnote", id="import-hyprnote"),
             ),
-            Static("Past Meetings"),
-            ListView(id="meeting-list"),
+            DataTable(id="meeting-table", cursor_type="row"),
         )
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one("#meeting-table", DataTable)
+        table.add_columns("Date", "Name", "Duration", "Transcript", "Summary")
         self._refresh_meetings()
 
     def _refresh_meetings(self) -> None:
@@ -68,11 +59,18 @@ class HomeScreen(Screen):
         if not config.vault.root:
             return
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
-        meetings = storage.list_meetings()
-        list_view = self.query_one("#meeting-list", ListView)
-        list_view.clear()
-        for meeting in meetings:
-            list_view.append(MeetingListItem(meeting))
+        self._meetings = storage.list_meetings()
+        table = self.query_one("#meeting-table", DataTable)
+        table.clear()
+        for meeting in self._meetings:
+            table.add_row(
+                str(meeting.date),
+                meeting.name,
+                meeting.duration or "-",
+                "yes" if meeting.has_transcript else "-",
+                "yes" if meeting.has_summary else "-",
+                key=meeting.name,
+            )
 
     @on(Button.Pressed, "#new-recording")
     def action_new_recording(self) -> None:
@@ -99,9 +97,9 @@ class HomeScreen(Screen):
             self.app.call_from_thread(self.notify, "Import failed. Check log.", severity="error")
 
     def _get_selected_meeting(self) -> MeetingInfo | None:
-        list_view = self.query_one("#meeting-list", ListView)
-        if list_view.highlighted_child and isinstance(list_view.highlighted_child, MeetingListItem):
-            return list_view.highlighted_child.meeting
+        table = self.query_one("#meeting-table", DataTable)
+        if table.cursor_row is not None and 0 <= table.cursor_row < len(self._meetings):
+            return self._meetings[table.cursor_row]
         return None
 
     def action_delete_meeting(self) -> None:
@@ -143,8 +141,9 @@ class HomeScreen(Screen):
         except ValueError as e:
             self.notify(str(e), severity="error")
 
-    @on(ListView.Selected, "#meeting-list")
-    def on_meeting_selected(self, event: ListView.Selected) -> None:
-        if isinstance(event.item, MeetingListItem):
+    @on(DataTable.RowSelected, "#meeting-table")
+    def on_meeting_selected(self, event: DataTable.RowSelected) -> None:
+        meeting = self._get_selected_meeting()
+        if meeting:
             from meetscribe.tui.screens.meeting import MeetingScreen
-            self.app.push_screen(MeetingScreen(event.item.meeting))
+            self.app.push_screen(MeetingScreen(meeting))
