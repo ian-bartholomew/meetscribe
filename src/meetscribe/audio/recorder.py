@@ -135,17 +135,27 @@ class AudioRecorder:
         """Called from the audio thread for each block of audio data.
 
         If the device has more channels than we're writing (e.g. an Aggregate
-        Device with 5 inputs), downmix all channels to stereo so no source
-        is lost.
+        Device with 7 inputs from BlackHole + Yeti + Zoom), downmix to stereo.
+
+        Strategy: sum all channels and normalize, rather than averaging.
+        This keeps signal levels strong regardless of how many channels
+        are silent. Clipping is applied to prevent distortion.
         """
         if indata.shape[1] > self._output_channels:
-            # Downmix: average all channels into stereo (L=even channels, R=odd channels)
-            # or simply average everything into mono then duplicate to stereo
-            mono = np.mean(indata, axis=1, keepdims=True)
+            # Sum pairs of channels into stereo: (0,2,4,6...) → L, (1,3,5,...) → R
+            n_ch = indata.shape[1]
+            left_channels = list(range(0, n_ch, 2))   # 0, 2, 4, 6
+            right_channels = list(range(1, n_ch, 2))   # 1, 3, 5
+
+            left = np.sum(indata[:, left_channels], axis=1)
+            right = np.sum(indata[:, right_channels], axis=1)
+
             if self._output_channels == 2:
-                block = np.column_stack([mono[:, 0], mono[:, 0]])
+                block = np.column_stack([left, right])
             else:
-                block = mono
+                block = ((left + right) / 2.0).reshape(-1, 1)
+
+            np.clip(block, -1.0, 1.0, out=block)
         else:
             block = indata.copy()
         self.peak_level = float(np.abs(block).max())
