@@ -68,9 +68,17 @@ class MeetingScreen(Screen):
 
         yield Footer()
 
+    def _find_recording(self) -> Path | None:
+        """Find recording file in any supported format."""
+        for ext in ("flac", "mp3", "wav", "m4a", "ogg"):
+            path = self.meeting.path / f"recording.{ext}"
+            if path.exists():
+                return path
+        return None
+
     def _compose_recording_tab(self) -> Vertical:
-        recording_path = self.meeting.path / "recording.flac"
-        if recording_path.exists():
+        recording_path = self._find_recording()
+        if recording_path:
             size_mb = recording_path.stat().st_size / (1024 * 1024)
             info_text = f"Recording: {recording_path.name}\nSize: {size_mb:.1f} MB"
         else:
@@ -191,9 +199,9 @@ class MeetingScreen(Screen):
         self.app.call_from_thread(self.notify, f"Transcribing with {model_name}...")
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
-        recording_path = self.meeting.path / "recording.flac"
+        recording_path = self._find_recording()
 
-        if not recording_path.exists():
+        if not recording_path:
             self.app.call_from_thread(self.notify, "No recording found.", severity="error")
             return
 

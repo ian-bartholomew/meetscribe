@@ -52,6 +52,15 @@ class MeetingStorage:
     def recording_path(self, name: str, meeting_date: date) -> Path:
         return self.meeting_dir(name, meeting_date) / "recording.flac"
 
+    def find_recording(self, name: str, meeting_date: date) -> Path | None:
+        """Find the recording file in any supported format."""
+        meeting = self.meeting_dir(name, meeting_date)
+        for ext in ("flac", "mp3", "wav", "m4a", "ogg"):
+            path = meeting / f"recording.{ext}"
+            if path.exists():
+                return path
+        return None
+
     def transcript_path(self, name: str, meeting_date: date, model: str) -> Path:
         return self.meeting_dir(name, meeting_date) / f"transcript-{model}.md"
 
@@ -90,7 +99,7 @@ class MeetingStorage:
                             name=meeting_dir.name,
                             date=meeting_date,
                             path=meeting_dir,
-                            has_recording="recording.flac" in files,
+                            has_recording=any(f.startswith("recording.") for f in files),
                             has_transcript=any(f.startswith("transcript-") for f in files),
                             has_summary=any(f.startswith("summary-") for f in files),
                             has_memos="memos.md" in files,

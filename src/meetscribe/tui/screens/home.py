@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from textual import on
+import logging
+
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
@@ -10,6 +12,8 @@ from textual.widgets import Button, Header, Footer, Static, ListView, ListItem, 
 
 from meetscribe.config import load_config
 from meetscribe.storage.vault import MeetingStorage, MeetingInfo
+
+log = logging.getLogger("meetscribe.home")
 
 
 class MeetingListItem(ListItem):
@@ -39,6 +43,7 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("n", "new_recording", "New Recording"),
+        ("i", "import_hyprnote", "Import Hyprnote"),
         ("s", "app.push_screen('settings')", "Settings"),
     ]
 
@@ -46,7 +51,10 @@ class HomeScreen(Screen):
         yield Header()
         yield Vertical(
             Static("Meetscribe", classes="title"),
-            Button("New Recording", id="new-recording", variant="primary"),
+            Horizontal(
+                Button("New Recording", id="new-recording", variant="primary"),
+                Button("Import from Hyprnote", id="import-hyprnote"),
+            ),
             Static("Past Meetings"),
             ListView(id="meeting-list"),
         )
@@ -70,6 +78,25 @@ class HomeScreen(Screen):
     def action_new_recording(self) -> None:
         from meetscribe.tui.screens.recording import RecordingScreen
         self.app.push_screen(RecordingScreen())
+
+    @on(Button.Pressed, "#import-hyprnote")
+    def action_import_hyprnote(self) -> None:
+        self._do_import()
+
+    @work(thread=True)
+    def _do_import(self) -> None:
+        try:
+            from meetscribe.importer import import_all_hyprnote
+            config = self.app.config
+            storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+            imported = import_all_hyprnote(storage)
+            msg = f"Imported {len(imported)} session(s) from Hyprnote"
+            log.info(msg)
+            self.app.call_from_thread(self.notify, msg)
+            self.app.call_from_thread(self._refresh_meetings)
+        except Exception:
+            log.exception("Import failed")
+            self.app.call_from_thread(self.notify, "Import failed. Check log.", severity="error")
 
     @on(ListView.Selected, "#meeting-list")
     def on_meeting_selected(self, event: ListView.Selected) -> None:
