@@ -40,7 +40,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from meetscribe.storage.vault import MeetingInfo, MeetingStorage
+from meetscribe.storage.vault import MeetingInfo, MeetingStorage, load_metadata, save_metadata
 from meetscribe.transcription.whisper import AVAILABLE_MODELS
 
 
@@ -176,6 +176,13 @@ class MeetingScreen(Screen):
         self._load_memos()
         self._populate_templates()
         self._populate_providers()
+        self._load_metadata()
+
+    def _load_metadata(self) -> None:
+        meta = load_metadata(self.meeting.path)
+        num_speakers = meta.get("num_speakers")
+        if num_speakers is not None:
+            self.query_one("#num-speakers", Input).value = str(num_speakers)
 
     def _load_existing_transcript(self) -> None:
         """Load the most recent transcript if one exists."""
@@ -245,6 +252,9 @@ class MeetingScreen(Screen):
         diarize = self.query_one("#diarize-checkbox", Checkbox).value
         num_speakers_str = self.query_one("#num-speakers", Input).value.strip()
         num_speakers = int(num_speakers_str) if num_speakers_str.isdigit() else None
+        # Persist num_speakers to metadata for future use
+        if num_speakers:
+            save_metadata(self.meeting.path, {"num_speakers": num_speakers})
         self._run_transcription(model_name, diarize, num_speakers)
 
     def _show_loading(self, widget_id: str) -> None:

@@ -36,6 +36,7 @@ class RecordingScreen(Screen):
             Button("Start Recording", id="start-btn", variant="primary"),
             Label("", id="timer"),
             Label("", id="level"),
+            Input(placeholder="# of people on call", id="num-participants", max_length=3),
             Button("Stop Recording", id="stop-btn", variant="error", disabled=True),
         )
         yield Footer()
@@ -105,10 +106,17 @@ class RecordingScreen(Screen):
         if self._recorder:
             self._recorder.stop()
 
-        from meetscribe.storage.vault import MeetingStorage, MeetingInfo
+        from meetscribe.storage.vault import MeetingStorage, MeetingInfo, save_metadata
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
         meeting_dir = storage.meeting_dir(self._meeting_name, date.today())
+
+        # Save metadata
+        num_str = self.query_one("#num-participants", Input).value.strip()
+        metadata = {"meeting_name": self._meeting_name, "date": str(date.today())}
+        if num_str.isdigit():
+            metadata["num_speakers"] = int(num_str)
+        save_metadata(meeting_dir, metadata)
 
         meeting = MeetingInfo(
             name=self._meeting_name,

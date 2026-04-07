@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -17,6 +19,25 @@ class MeetingInfo:
     has_summary: bool = False
     has_memos: bool = False
     duration: str = ""
+
+
+METADATA_FILE = "_metadata.json"
+
+
+def load_metadata(meeting_path: Path) -> dict[str, Any]:
+    """Load meeting metadata from _metadata.json."""
+    meta_path = meeting_path / METADATA_FILE
+    if meta_path.exists():
+        return json.loads(meta_path.read_text())
+    return {}
+
+
+def save_metadata(meeting_path: Path, data: dict[str, Any]) -> None:
+    """Save meeting metadata to _metadata.json. Merges with existing data."""
+    existing = load_metadata(meeting_path)
+    existing.update(data)
+    meta_path = meeting_path / METADATA_FILE
+    meta_path.write_text(json.dumps(existing, indent=2))
 
 
 def slugify(name: str) -> str:
