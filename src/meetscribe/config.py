@@ -58,7 +58,10 @@ def default_config() -> MeetscribeConfig:
 
 
 def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
+    # log_level must come before sections with sub-tables (like summarization.endpoints)
+    # to avoid TOML parsing it as part of that section
     return {
+        "log_level": cfg.log_level,
         "vault": {
             "root": cfg.vault.root,
             "meetings_folder": cfg.vault.meetings_folder,
@@ -77,7 +80,6 @@ def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
             "default_model": cfg.summarization.default_model,
             "endpoints": cfg.summarization.endpoints,
         },
-        "log_level": cfg.log_level,
     }
 
 
