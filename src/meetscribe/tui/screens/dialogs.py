@@ -11,6 +11,8 @@ from textual.widgets import Button, Input, Label, Static
 class ConfirmDialog(ModalScreen[bool]):
     """Modal confirmation dialog. Returns True if confirmed, False otherwise."""
 
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
     CSS = """
     ConfirmDialog {
         align: center middle;
@@ -51,9 +53,14 @@ class ConfirmDialog(ModalScreen[bool]):
     def on_no(self) -> None:
         self.dismiss(False)
 
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
 
 class RenameDialog(ModalScreen[str | None]):
     """Modal rename dialog. Returns the new name or None if cancelled."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     CSS = """
     RenameDialog {
@@ -100,3 +107,6 @@ class RenameDialog(ModalScreen[str | None]):
     @on(Input.Submitted, "#rename-input")
     def on_submit(self) -> None:
         self.on_ok()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
@@ -23,6 +23,10 @@ class BulkProcessConfig:
 
 class BulkProcessDialog(ModalScreen[BulkProcessConfig | None]):
     """Modal dialog to configure bulk processing options."""
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+    ]
 
     CSS = """
     BulkProcessDialog {
@@ -117,9 +121,9 @@ class BulkProcessDialog(ModalScreen[BulkProcessConfig | None]):
         if event.value and event.value != Select.BLANK:
             self._fetch_models(str(event.value))
 
+    @work(thread=True)
     def _fetch_models(self, provider: str) -> None:
         from meetscribe.summarization.provider import SummarizationProvider
-        # Get endpoint from app config
         config = self.app.config
         endpoint = config.summarization.endpoints.get(provider, "")
         if not endpoint:
@@ -128,11 +132,18 @@ class BulkProcessDialog(ModalScreen[BulkProcessConfig | None]):
         models = p.list_models()
         if models:
             options = [(m, m) for m in models]
-            model_select = self.query_one("#bulk-llm-model", Select)
-            model_select.set_options(options)
-            # Try to select the default
-            if self._default_llm_model in [m for m, _ in options]:
-                model_select.value = self._default_llm_model
+            default = self._default_llm_model
+
+            def _update() -> None:
+                model_select = self.query_one("#bulk-llm-model", Select)
+                model_select.set_options(options)
+                if default in [m for m, _ in options]:
+                    model_select.value = default
+
+            self.app.call_from_thread(_update)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
     @on(Button.Pressed, "#bulk-start")
     def on_start(self) -> None:
