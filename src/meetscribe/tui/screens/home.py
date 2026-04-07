@@ -21,7 +21,6 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("n", "new_recording", "New Recording"),
-        ("i", "import_hyprnote", "Import Hyprnote"),
         ("r", "rename_meeting", "Rename"),
         ("d", "delete_meeting", "Delete"),
         ("b", "bulk_process", "Bulk Process"),
@@ -44,7 +43,6 @@ class HomeScreen(Screen):
             Static("Meetscribe", classes="title"),
             Horizontal(
                 Button("New Recording", id="new-recording", variant="primary"),
-                Button("Import from Hyprnote", id="import-hyprnote"),
                 Button("Bulk Process Missing", id="bulk-process"),
             ),
             DataTable(id="meeting-table", cursor_type="row"),
@@ -78,25 +76,6 @@ class HomeScreen(Screen):
     def action_new_recording(self) -> None:
         from meetscribe.tui.screens.recording import RecordingScreen
         self.app.push_screen(RecordingScreen())
-
-    @on(Button.Pressed, "#import-hyprnote")
-    def action_import_hyprnote(self) -> None:
-        self._do_import()
-
-    @work(thread=True)
-    def _do_import(self) -> None:
-        try:
-            from meetscribe.importer import import_all_hyprnote
-            config = self.app.config
-            storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
-            imported = import_all_hyprnote(storage)
-            msg = f"Imported {len(imported)} session(s) from Hyprnote"
-            log.info(msg)
-            self.app.call_from_thread(self.notify, msg)
-            self.app.call_from_thread(self._refresh_meetings)
-        except Exception:
-            log.exception("Import failed")
-            self.app.call_from_thread(self.notify, "Import failed. Check log.", severity="error")
 
     def _get_selected_meeting(self) -> MeetingInfo | None:
         table = self.query_one("#meeting-table", DataTable)
