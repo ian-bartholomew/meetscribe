@@ -145,20 +145,41 @@ class HomeScreen(Screen):
 
     @on(Button.Pressed, "#bulk-process")
     def action_bulk_process(self) -> None:
-        # Count what needs processing
         need_transcript = [m for m in self._meetings if m.has_recording and not m.has_transcript]
         need_summary = [m for m in self._meetings if m.has_transcript and not m.has_summary]
         total = len(need_transcript) + len(need_summary)
         if total == 0:
             self.notify("All meetings are already processed.")
             return
-        self.notify(f"Starting bulk process: {len(need_transcript)} transcriptions, {len(need_summary)} summaries...")
-        self._do_bulk_process()
+
+        from meetscribe.tui.screens.meeting import _find_templates_dir
+        from meetscribe.templates.engine import TemplateEngine
+        templates = TemplateEngine(_find_templates_dir()).list_templates()
+        config = self.app.config
+        providers = list(config.summarization.endpoints.keys())
+
+        from meetscribe.tui.screens.bulk_dialog import BulkProcessDialog
+        self.app.push_screen(
+            BulkProcessDialog(
+                templates=templates,
+                providers=providers,
+                default_whisper_model=config.transcription.default_model,
+                default_template="default",
+                default_provider=config.summarization.default_provider,
+                default_llm_model=config.summarization.default_model,
+                num_transcriptions=len(need_transcript),
+                num_summaries=len(need_summary),
+            ),
+            callback=self._on_bulk_config,
+        )
+
+    def _on_bulk_config(self, config_result) -> None:
+        if config_result is None:
+            return
+        self._do_bulk_process(config_result)
 
     @work(thread=True)
-    def _do_bulk_process(self) -> None:
-        import time as _time
-        from pathlib import Path
+    def _do_bulk_process(self, bulk_config) -> None:
         from meetscribe.storage.vault import load_metadata
         from meetscribe.transcription.whisper import transcribe_audio
         from meetscribe.summarization.provider import SummarizationProvider
@@ -167,7 +188,7 @@ class HomeScreen(Screen):
 
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
-        model_name = config.transcription.default_model
+        model_name = bulk_config.whisper_model
 
         # Phase 1: Transcribe meetings missing transcripts
         need_transcript = [m for m in self._meetings if m.has_recording and not m.has_transcript]
@@ -195,7 +216,7 @@ class HomeScreen(Screen):
                     model_name=model_name,
                     meeting_name=meeting.name,
                     meeting_date=str(meeting.date),
-                    enable_diarization=num_speakers is not None and num_speakers > 1,
+                    enable_diarization=bulk_config.enable_diarization and num_speakers is not None and num_speakers > 1,
                     num_speakers=num_speakers,
                 )
                 transcript_path = storage.transcript_path(meeting.name, meeting.date, model_name)
@@ -211,10 +232,10 @@ class HomeScreen(Screen):
         if need_summary:
             templates_dir = _find_templates_dir()
             engine = TemplateEngine(templates_dir)
-            template_name = "default"
-            provider_name = config.summarization.default_provider
+            template_name = bulk_config.template
+            provider_name = bulk_config.provider
             endpoint = config.summarization.endpoints.get(provider_name, "")
-            llm_model = config.summarization.default_model
+            llm_model = bulk_config.llm_model
 
             if not endpoint:
                 self.app.call_from_thread(
