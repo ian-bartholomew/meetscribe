@@ -126,6 +126,7 @@ class AudioRecorder:
         self.channels = channels
         self.is_recording = False
         self.peak_level = 0.0
+        self._device_sample_rate = sample_rate
         self._output_channels = channels
         self._queue: queue.Queue[np.ndarray | None] = queue.Queue()
         self._thread: threading.Thread | None = None
@@ -134,32 +135,28 @@ class AudioRecorder:
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info: object, status: sd.CallbackFlags) -> None:
         """Called from the audio thread for each block of audio data.
 
-        If the device has more channels than we're writing (e.g. an Aggregate
-        Device with 7 inputs from BlackHole + Yeti + Zoom), downmix to stereo.
-
-        Strategy: sum all channels and normalize, rather than averaging.
-        This keeps signal levels strong regardless of how many channels
-        are silent. Clipping is applied to prevent distortion.
+        Downmixes all input channels to mono and resamples from the device
+        sample rate (e.g. 48kHz) to 16kHz for optimal file size and
+        Whisper compatibility.
         """
-        if indata.shape[1] > self._output_channels:
-            # Sum pairs of channels into stereo: (0,2,4,6...) → L, (1,3,5,...) → R
-            n_ch = indata.shape[1]
-            left_channels = list(range(0, n_ch, 2))   # 0, 2, 4, 6
-            right_channels = list(range(1, n_ch, 2))   # 1, 3, 5
-
-            left = np.sum(indata[:, left_channels], axis=1)
-            right = np.sum(indata[:, right_channels], axis=1)
-
-            if self._output_channels == 2:
-                block = np.column_stack([left, right])
-            else:
-                block = ((left + right) / 2.0).reshape(-1, 1)
-
-            np.clip(block, -1.0, 1.0, out=block)
+        # Downmix to mono
+        if indata.shape[1] > 1:
+            mono = np.sum(indata, axis=1)
+            np.clip(mono, -1.0, 1.0, out=mono)
         else:
-            block = indata.copy()
-        self.peak_level = float(np.abs(block).max())
-        self._queue.put(block)
+            mono = indata[:, 0].copy()
+
+        # Downsample from device rate to 16kHz
+        if self._device_sample_rate != self.sample_rate:
+            ratio = self.sample_rate / self._device_sample_rate
+            new_len = int(len(mono) * ratio)
+            if new_len > 0:
+                # Simple decimation — adequate for speech in a real-time callback
+                indices = np.linspace(0, len(mono) - 1, new_len).astype(int)
+                mono = mono[indices]
+
+        self.peak_level = float(np.abs(mono).max())
+        self._queue.put(mono.reshape(-1, 1))
 
     def _writer_loop(self) -> None:
         """Background thread that drains the queue and writes to disk."""
@@ -185,13 +182,15 @@ class AudioRecorder:
         device_info = get_device_info(self.device_name)
         device_index = device_info["index"]
 
-        # Auto-detect sample rate from the device
-        self.sample_rate = int(device_info["default_samplerate"])
+        # Auto-detect sample rate from the device for capture
+        self._device_sample_rate = int(device_info["default_samplerate"])
 
-        # Capture ALL device channels so we don't miss any audio source,
-        # but write a stereo (or configured channel count) file.
+        # Write mono at 16kHz — optimal for speech (Whisper uses 16kHz internally)
+        self.sample_rate = 16000
+        self._output_channels = 1
+
+        # Capture ALL device channels so we don't miss any audio source
         device_channels = device_info["max_input_channels"]
-        self._output_channels = min(self.channels, 2)
 
         self.is_recording = True
         self.peak_level = 0.0
@@ -200,7 +199,7 @@ class AudioRecorder:
         self._thread.start()
 
         self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
+            samplerate=self._device_sample_rate,
             device=device_index,
             channels=device_channels,
             callback=self._audio_callback,
