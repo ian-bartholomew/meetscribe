@@ -178,7 +178,7 @@ class HomeScreen(Screen):
             return
         self._do_bulk_process(config_result)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True)
     def _do_bulk_process(self, bulk_config) -> None:
         from meetscribe.storage.vault import load_metadata
         from meetscribe.transcription.whisper import transcribe_audio
@@ -186,13 +186,24 @@ class HomeScreen(Screen):
         from meetscribe.templates.engine import TemplateEngine
         from meetscribe.tui.screens.meeting import _find_templates_dir
 
+        log.info("Bulk process starting: whisper=%s, template=%s, provider=%s, model=%s, diarize=%s",
+                 bulk_config.whisper_model, bulk_config.template,
+                 bulk_config.provider, bulk_config.llm_model,
+                 bulk_config.enable_diarization)
+
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
         model_name = bulk_config.whisper_model
 
+        # Re-scan meetings fresh (dialog may have changed state)
+        all_meetings = storage.list_meetings()
+
         # Phase 1: Transcribe meetings missing transcripts
-        need_transcript = [m for m in self._meetings if m.has_recording and not m.has_transcript]
+        need_transcript = [m for m in all_meetings if m.has_recording and not m.has_transcript]
+        log.info("Bulk: %d meetings need transcription", len(need_transcript))
+
         for i, meeting in enumerate(need_transcript):
+            log.info("Bulk transcribing %d/%d: %s", i + 1, len(need_transcript), meeting.name)
             self.app.call_from_thread(
                 self.notify, f"Transcribing {i+1}/{len(need_transcript)}: {meeting.name}..."
             )
@@ -205,6 +216,7 @@ class HomeScreen(Screen):
                         recording_path = p
                         break
                 if not recording_path:
+                    log.info("Bulk: no recording found for %s, skipping", meeting.name)
                     continue
 
                 # Check metadata for num_speakers
@@ -226,8 +238,9 @@ class HomeScreen(Screen):
                 log.exception("Bulk transcription failed for %s", meeting.name)
 
         # Phase 2: Summarize meetings missing summaries (re-scan to pick up new transcripts)
-        self._meetings = storage.list_meetings()
-        need_summary = [m for m in self._meetings if m.has_transcript and not m.has_summary]
+        all_meetings = storage.list_meetings()
+        need_summary = [m for m in all_meetings if m.has_transcript and not m.has_summary]
+        log.info("Bulk: %d meetings need summarization", len(need_summary))
 
         if need_summary:
             templates_dir = _find_templates_dir()
@@ -238,11 +251,13 @@ class HomeScreen(Screen):
             llm_model = bulk_config.llm_model
 
             if not endpoint:
+                log.error("Bulk: no endpoint for provider '%s'", provider_name)
                 self.app.call_from_thread(
                     self.notify, f"No endpoint for provider '{provider_name}'. Skipping summaries.", severity="error"
                 )
             else:
                 for i, meeting in enumerate(need_summary):
+                    log.info("Bulk summarizing %d/%d: %s", i + 1, len(need_summary), meeting.name)
                     self.app.call_from_thread(
                         self.notify, f"Summarizing {i+1}/{len(need_summary)}: {meeting.name}..."
                     )
@@ -288,6 +303,7 @@ class HomeScreen(Screen):
                         log.exception("Bulk summarization failed for %s", meeting.name)
 
         self.app.call_from_thread(self._refresh_meetings)
+        log.info("Bulk processing complete!")
         self.app.call_from_thread(self.notify, "Bulk processing complete!")
 
     @on(DataTable.RowSelected, "#meeting-table")
