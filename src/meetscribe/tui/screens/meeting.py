@@ -309,6 +309,10 @@ class MeetingScreen(Screen):
             # Send to LLM
             from meetscribe.summarization.provider import SummarizationProvider
             endpoint = config.summarization.endpoints.get(provider, "")
+            log.info("Provider=%r, endpoint=%r, endpoints=%r", provider, endpoint, config.summarization.endpoints)
+            if not endpoint:
+                self.app.call_from_thread(self.notify, f"No endpoint configured for provider '{provider}'", severity="error")
+                return
             llm = SummarizationProvider(base_url=endpoint, model=model)
             summary = llm.summarize(
                 system_prompt="You are a meeting summarizer. Produce a clear, well-structured summary.",
