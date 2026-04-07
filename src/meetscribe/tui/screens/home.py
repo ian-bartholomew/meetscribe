@@ -33,8 +33,9 @@ class MeetingListItem(ListItem):
             icons += "[S]"
         if self.meeting.has_memos:
             icons += "[M]"
+        duration = f"  ({self.meeting.duration})" if self.meeting.duration else ""
         yield Label(
-            f"{self.meeting.date}  {self.meeting.name}  {icons}"
+            f"{self.meeting.date}  {self.meeting.name}{duration}  {icons}"
         )
 
 

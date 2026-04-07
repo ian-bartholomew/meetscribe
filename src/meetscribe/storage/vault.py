@@ -16,6 +16,7 @@ class MeetingInfo:
     has_transcript: bool = False
     has_summary: bool = False
     has_memos: bool = False
+    duration: str = ""
 
 
 def slugify(name: str) -> str:
@@ -25,6 +26,25 @@ def slugify(name: str) -> str:
     slug = re.sub(r"[\s]+", "-", slug).strip("-")
     slug = re.sub(r"-+", "-", slug)
     return slug
+
+
+def _get_recording_duration(meeting_dir: Path, files: set[str]) -> str:
+    """Get the duration of the recording file, if any."""
+    for ext in ("flac", "mp3", "wav", "m4a", "ogg"):
+        fname = f"recording.{ext}"
+        if fname in files:
+            try:
+                import soundfile as sf
+                info = sf.info(str(meeting_dir / fname))
+                total = int(info.duration)
+                h, remainder = divmod(total, 3600)
+                m, s = divmod(remainder, 60)
+                if h > 0:
+                    return f"{h}h {m:02d}m"
+                return f"{m}m {s:02d}s"
+            except Exception:
+                return ""
+    return ""
 
 
 class MeetingStorage:
@@ -117,6 +137,7 @@ class MeetingStorage:
                             int(day_dir.name),
                         )
                         files = {f.name for f in meeting_dir.iterdir()}
+                        duration = _get_recording_duration(meeting_dir, files)
                         meetings.append(MeetingInfo(
                             name=meeting_dir.name,
                             date=meeting_date,
@@ -125,5 +146,6 @@ class MeetingStorage:
                             has_transcript=any(f.startswith("transcript-") for f in files),
                             has_summary=any(f.startswith("summary-") for f in files),
                             has_memos="memos.md" in files,
+                            duration=duration,
                         ))
         return meetings
