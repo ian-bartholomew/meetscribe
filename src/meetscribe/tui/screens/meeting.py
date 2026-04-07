@@ -57,8 +57,7 @@ class MeetingScreen(Screen):
 
     .controls-bar {
         height: auto;
-        max-height: 3;
-        dock: top;
+        max-height: 5;
     }
 
     #transcript-view, #summary-view {
