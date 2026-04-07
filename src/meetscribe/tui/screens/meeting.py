@@ -91,8 +91,18 @@ class MeetingScreen(Screen):
     def _compose_recording_tab(self) -> Vertical:
         recording_path = self._find_recording()
         if recording_path:
+            import soundfile as sf
             size_mb = recording_path.stat().st_size / (1024 * 1024)
-            info_text = f"Recording: {recording_path.name}\nSize: {size_mb:.1f} MB"
+            try:
+                info = sf.info(str(recording_path))
+                duration_s = info.duration
+                h = int(duration_s // 3600)
+                m = int((duration_s % 3600) // 60)
+                s = int(duration_s % 60)
+                duration_str = f"{h:02d}:{m:02d}:{s:02d}"
+            except Exception:
+                duration_str = "unknown"
+            info_text = f"Recording: {recording_path.name}\nSize: {size_mb:.1f} MB\nDuration: {duration_str}"
         else:
             info_text = "No recording found."
         return Vertical(Label(info_text, id="recording-info"))
