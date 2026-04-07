@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from pathlib import Path
 
 from textual import on, work
+
+log = logging.getLogger("meetscribe.meeting")
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
@@ -182,19 +186,26 @@ class MeetingScreen(Screen):
             self.app.call_from_thread(self.notify, "No recording found.", severity="error")
             return
 
-        from meetscribe.transcription.whisper import transcribe_audio
-        transcript = transcribe_audio(
-            audio_path=recording_path,
-            model_name=model_name,
-            meeting_name=self.meeting.name,
-            meeting_date=str(self.meeting.date),
-        )
+        try:
+            log.info("Starting transcription: %s with model %s", recording_path, model_name)
+            from meetscribe.transcription.whisper import transcribe_audio
+            transcript = transcribe_audio(
+                audio_path=recording_path,
+                model_name=model_name,
+                meeting_name=self.meeting.name,
+                meeting_date=str(self.meeting.date),
+            )
 
-        transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)
-        transcript_path.write_text(transcript)
+            transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)
+            transcript_path.write_text(transcript)
+            log.info("Transcription saved to %s", transcript_path)
 
-        self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
-        self.app.call_from_thread(self.notify, "Transcription complete!")
+            self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
+            self.app.call_from_thread(self.notify, "Transcription complete!")
+        except Exception:
+            log.exception("Transcription failed")
+            msg = f"Transcription failed. See log: {self.app.log_file}"
+            self.app.call_from_thread(self.notify, msg, severity="error")
 
     @on(Button.Pressed, "#summarize-btn")
     @on(Button.Pressed, "#regenerate-summary-btn")
@@ -224,61 +235,69 @@ class MeetingScreen(Screen):
         self.app.call_from_thread(self.notify, f"Summarizing with {provider}/{model}...")
         config = self.app.config
 
-        # Find the latest transcript
-        transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
-        if not transcripts:
-            self.app.call_from_thread(self.notify, "No transcript found. Transcribe first.", severity="error")
-            return
-        transcript_text = transcripts[0].read_text()
+        try:
+            log.info("Starting summarization: template=%s provider=%s model=%s", template_name, provider, model)
 
-        # Load memos
-        memos_path = self.meeting.path / "memos.md"
-        memos_text = memos_path.read_text() if memos_path.exists() else ""
+            # Find the latest transcript
+            transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+            if not transcripts:
+                self.app.call_from_thread(self.notify, "No transcript found. Transcribe first.", severity="error")
+                return
+            transcript_text = transcripts[0].read_text()
 
-        # Render template
-        from meetscribe.templates.engine import TemplateEngine
-        templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
-        if not templates_dir.exists():
-            templates_dir = Path(__file__).parent.parent.parent / "templates"
-        engine = TemplateEngine(templates_dir)
+            # Load memos
+            memos_path = self.meeting.path / "memos.md"
+            memos_text = memos_path.read_text() if memos_path.exists() else ""
 
-        rendered = engine.render(
-            template_name=template_name,
-            transcript=transcript_text,
-            memos=memos_text,
-            meeting_name=self.meeting.name,
-            date=str(self.meeting.date),
-            duration="",
-        )
+            # Render template
+            from meetscribe.templates.engine import TemplateEngine
+            templates_dir = Path(__file__).parent.parent.parent.parent / "templates"
+            if not templates_dir.exists():
+                templates_dir = Path(__file__).parent.parent.parent / "templates"
+            engine = TemplateEngine(templates_dir)
 
-        # Send to LLM
-        from meetscribe.summarization.provider import SummarizationProvider
-        endpoint = config.summarization.endpoints.get(provider, "")
-        llm = SummarizationProvider(base_url=endpoint, model=model)
-        summary = llm.summarize(
-            system_prompt="You are a meeting summarizer. Produce a clear, well-structured summary.",
-            user_prompt=rendered,
-        )
+            rendered = engine.render(
+                template_name=template_name,
+                transcript=transcript_text,
+                memos=memos_text,
+                meeting_name=self.meeting.name,
+                date=str(self.meeting.date),
+                duration="",
+            )
 
-        # Save
-        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
-        summary_path = storage.summary_path(self.meeting.name, self.meeting.date, template_name)
+            # Send to LLM
+            from meetscribe.summarization.provider import SummarizationProvider
+            endpoint = config.summarization.endpoints.get(provider, "")
+            llm = SummarizationProvider(base_url=endpoint, model=model)
+            summary = llm.summarize(
+                system_prompt="You are a meeting summarizer. Produce a clear, well-structured summary.",
+                user_prompt=rendered,
+            )
 
-        # Add frontmatter
-        full_summary = (
-            f"---\n"
-            f"meeting: {self.meeting.name}\n"
-            f"date: {self.meeting.date}\n"
-            f"template: {template_name}\n"
-            f"provider: {provider}\n"
-            f"model: {model}\n"
-            f"---\n\n"
-            f"{summary}"
-        )
-        summary_path.write_text(full_summary)
+            # Save
+            storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+            summary_path = storage.summary_path(self.meeting.name, self.meeting.date, template_name)
 
-        self.app.call_from_thread(self.query_one("#summary-view", Markdown).update, full_summary)
-        self.app.call_from_thread(self.notify, "Summary complete!")
+            # Add frontmatter
+            full_summary = (
+                f"---\n"
+                f"meeting: {self.meeting.name}\n"
+                f"date: {self.meeting.date}\n"
+                f"template: {template_name}\n"
+                f"provider: {provider}\n"
+                f"model: {model}\n"
+                f"---\n\n"
+                f"{summary}"
+            )
+            summary_path.write_text(full_summary)
+            log.info("Summary saved to %s", summary_path)
+
+            self.app.call_from_thread(self.query_one("#summary-view", Markdown).update, full_summary)
+            self.app.call_from_thread(self.notify, "Summary complete!")
+        except Exception:
+            log.exception("Summarization failed")
+            msg = f"Summarization failed. See log: {self.app.log_file}"
+            self.app.call_from_thread(self.notify, msg, severity="error")
 
     @on(Button.Pressed, "#save-memos-btn")
     def save_memos(self) -> None:
