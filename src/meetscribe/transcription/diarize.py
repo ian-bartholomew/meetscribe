@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 import torch
-import torchaudio
 from scipy.cluster.hierarchy import fcluster, linkage
 from speechbrain.inference.speaker import SpeakerRecognition
 
@@ -27,15 +27,21 @@ class SpeakerSegment:
 
 
 def _load_audio(audio_path: Path) -> torch.Tensor:
-    """Load audio file and resample to 16kHz mono."""
-    waveform, sr = torchaudio.load(str(audio_path))
+    """Load audio file and resample to 16kHz mono using soundfile + scipy."""
+    data, sr = sf.read(str(audio_path), dtype="float32")
+
     # Convert to mono
-    if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    # Resample to 16kHz
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+
+    # Resample to 16kHz if needed
     if sr != SAMPLE_RATE:
-        resampler = torchaudio.transforms.Resample(sr, SAMPLE_RATE)
-        waveform = resampler(waveform)
+        from scipy.signal import resample
+        num_samples = int(len(data) * SAMPLE_RATE / sr)
+        data = resample(data, num_samples).astype(np.float32)
+
+    # Convert to torch tensor with shape (1, num_samples)
+    waveform = torch.from_numpy(data).unsqueeze(0)
     return waveform
 
 
