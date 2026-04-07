@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# Disable tqdm's multiprocessing lock — it crashes in Textual worker threads
+# on Python 3.13 due to fork_exec issues. Must be set before any tqdm import.
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 from faster_whisper import WhisperModel
 
