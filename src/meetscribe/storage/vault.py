@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -69,6 +70,27 @@ class MeetingStorage:
 
     def memos_path(self, name: str, meeting_date: date) -> Path:
         return self.meeting_dir(name, meeting_date) / "memos.md"
+
+    def delete_meeting(self, meeting: MeetingInfo) -> None:
+        """Delete a meeting directory and all its contents."""
+        if meeting.path.exists():
+            shutil.rmtree(meeting.path)
+
+    def rename_meeting(self, meeting: MeetingInfo, new_name: str) -> MeetingInfo:
+        """Rename a meeting by moving its directory. Returns updated MeetingInfo."""
+        new_dir = meeting.path.parent / slugify(new_name)
+        if new_dir.exists():
+            raise ValueError(f"A meeting named '{new_name}' already exists on {meeting.date}")
+        meeting.path.rename(new_dir)
+        return MeetingInfo(
+            name=slugify(new_name),
+            date=meeting.date,
+            path=new_dir,
+            has_recording=meeting.has_recording,
+            has_transcript=meeting.has_transcript,
+            has_summary=meeting.has_summary,
+            has_memos=meeting.has_memos,
+        )
 
     def list_meetings(self) -> list[MeetingInfo]:
         """Scan the meetings folder and return all meetings, newest first."""

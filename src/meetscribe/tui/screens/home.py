@@ -44,6 +44,8 @@ class HomeScreen(Screen):
     BINDINGS = [
         ("n", "new_recording", "New Recording"),
         ("i", "import_hyprnote", "Import Hyprnote"),
+        ("r", "rename_meeting", "Rename"),
+        ("d", "delete_meeting", "Delete"),
         ("s", "app.push_screen('settings')", "Settings"),
     ]
 
@@ -97,6 +99,51 @@ class HomeScreen(Screen):
         except Exception:
             log.exception("Import failed")
             self.app.call_from_thread(self.notify, "Import failed. Check log.", severity="error")
+
+    def _get_selected_meeting(self) -> MeetingInfo | None:
+        list_view = self.query_one("#meeting-list", ListView)
+        if list_view.highlighted_child and isinstance(list_view.highlighted_child, MeetingListItem):
+            return list_view.highlighted_child.meeting
+        return None
+
+    def action_delete_meeting(self) -> None:
+        meeting = self._get_selected_meeting()
+        if not meeting:
+            self.notify("No meeting selected.", severity="error")
+            return
+        from meetscribe.tui.screens.dialogs import ConfirmDialog
+        self.app.push_screen(
+            ConfirmDialog(f"Delete '{meeting.name}' ({meeting.date})?\nThis cannot be undone."),
+            callback=lambda confirmed: self._do_delete(meeting) if confirmed else None,
+        )
+
+    def _do_delete(self, meeting: MeetingInfo) -> None:
+        config = self.app.config
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        storage.delete_meeting(meeting)
+        self.notify(f"Deleted: {meeting.name}")
+        self._refresh_meetings()
+
+    def action_rename_meeting(self) -> None:
+        meeting = self._get_selected_meeting()
+        if not meeting:
+            self.notify("No meeting selected.", severity="error")
+            return
+        from meetscribe.tui.screens.dialogs import RenameDialog
+        self.app.push_screen(
+            RenameDialog(meeting.name),
+            callback=lambda new_name: self._do_rename(meeting, new_name) if new_name else None,
+        )
+
+    def _do_rename(self, meeting: MeetingInfo, new_name: str) -> None:
+        config = self.app.config
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        try:
+            storage.rename_meeting(meeting, new_name)
+            self.notify(f"Renamed to: {new_name}")
+            self._refresh_meetings()
+        except ValueError as e:
+            self.notify(str(e), severity="error")
 
     @on(ListView.Selected, "#meeting-list")
     def on_meeting_selected(self, event: ListView.Selected) -> None:

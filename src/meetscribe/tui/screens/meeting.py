@@ -77,6 +77,8 @@ class MeetingScreen(Screen):
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
+        ("r", "rename_meeting", "Rename"),
+        ("d", "delete_meeting", "Delete"),
     ]
 
     def __init__(self, meeting: MeetingInfo) -> None:
@@ -424,6 +426,43 @@ class MeetingScreen(Screen):
         memos_path.parent.mkdir(parents=True, exist_ok=True)
         memos_path.write_text(memos_text)
         self.notify("Memos saved.")
+
+    def action_rename_meeting(self) -> None:
+        from meetscribe.tui.screens.dialogs import RenameDialog
+        self.app.push_screen(
+            RenameDialog(self.meeting.name),
+            callback=self._do_rename,
+        )
+
+    def _do_rename(self, new_name: str | None) -> None:
+        if not new_name:
+            return
+        config = self.app.config
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        try:
+            self.meeting = storage.rename_meeting(self.meeting, new_name)
+            self.query_one(".title", Static).update(
+                f"Meeting: {self.meeting.name} ({self.meeting.date})"
+            )
+            self.notify(f"Renamed to: {new_name}")
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+
+    def action_delete_meeting(self) -> None:
+        from meetscribe.tui.screens.dialogs import ConfirmDialog
+        self.app.push_screen(
+            ConfirmDialog(f"Delete '{self.meeting.name}' ({self.meeting.date})?\nThis cannot be undone."),
+            callback=self._do_delete,
+        )
+
+    def _do_delete(self, confirmed: bool) -> None:
+        if not confirmed:
+            return
+        config = self.app.config
+        storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
+        storage.delete_meeting(self.meeting)
+        self.notify(f"Deleted: {self.meeting.name}")
+        self.app.pop_screen()
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
