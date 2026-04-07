@@ -29,6 +29,7 @@ from textual.widgets import (
     Checkbox,
     Footer,
     Header,
+    Input,
     Label,
     LoadingIndicator,
     Markdown,
@@ -67,6 +68,10 @@ class MeetingScreen(Screen):
 
     #memos-editor {
         height: 1fr;
+    }
+
+    #num-speakers {
+        width: 14;
     }
     """
 
@@ -130,6 +135,7 @@ class MeetingScreen(Screen):
             Horizontal(
                 Select(model_options, value=default_model, id="whisper-model"),
                 Checkbox("Identify speakers", id="diarize-checkbox"),
+                Input(placeholder="# speakers", id="num-speakers", max_length=2),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
                 classes="controls-bar",
@@ -235,7 +241,9 @@ class MeetingScreen(Screen):
         model_select = self.query_one("#whisper-model", Select)
         model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
         diarize = self.query_one("#diarize-checkbox", Checkbox).value
-        self._run_transcription(model_name, diarize)
+        num_speakers_str = self.query_one("#num-speakers", Input).value.strip()
+        num_speakers = int(num_speakers_str) if num_speakers_str.isdigit() else None
+        self._run_transcription(model_name, diarize, num_speakers)
 
     def _show_loading(self, widget_id: str) -> None:
         self.query_one(f"#{widget_id}").add_class("visible")
@@ -244,7 +252,7 @@ class MeetingScreen(Screen):
         self.query_one(f"#{widget_id}").remove_class("visible")
 
     @work(thread=True)
-    def _run_transcription(self, model_name: str, enable_diarization: bool = False) -> None:
+    def _run_transcription(self, model_name: str, enable_diarization: bool = False, num_speakers: int | None = None) -> None:
         import time as _time
         t_start = _time.monotonic()
         self.app.call_from_thread(self._show_loading, "transcript-loading")
@@ -281,6 +289,7 @@ class MeetingScreen(Screen):
                 meeting_name=self.meeting.name,
                 meeting_date=str(self.meeting.date),
                 enable_diarization=enable_diarization,
+                num_speakers=num_speakers,
                 on_segment=on_segment,
             )
 

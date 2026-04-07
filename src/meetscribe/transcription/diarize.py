@@ -1,4 +1,4 @@
-"""Speaker diarization using SpeechBrain ECAPA-TDNN embeddings + spectral clustering."""
+"""Speaker diarization using SpeechBrain ECAPA-TDNN embeddings + clustering."""
 from __future__ import annotations
 
 import logging
@@ -9,14 +9,18 @@ import numpy as np
 import soundfile as sf
 import torch
 from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import pdist
 from speechbrain.inference.speaker import SpeakerRecognition
 
 log = logging.getLogger("meetscribe.diarize")
 
-# Segment length in seconds for embedding extraction
-SEGMENT_LENGTH = 3.0
-SEGMENT_STEP = 1.5  # Overlap by half for better coverage
+# Longer segments produce more stable speaker embeddings
+SEGMENT_LENGTH = 5.0
+SEGMENT_STEP = 2.5  # 50% overlap
 SAMPLE_RATE = 16000  # SpeechBrain models expect 16kHz
+
+# Minimum audio energy to consider a segment as speech (skip silence)
+ENERGY_THRESHOLD = 0.005
 
 
 @dataclass
@@ -51,6 +55,7 @@ def _extract_embeddings(
 ) -> list[tuple[float, float, np.ndarray]]:
     """Extract speaker embeddings from overlapping audio segments.
 
+    Skips silent segments to avoid polluting the clustering with noise.
     Returns list of (start_time, end_time, embedding) tuples.
     """
     total_samples = waveform.shape[1]
@@ -65,9 +70,15 @@ def _extract_embeddings(
         end = min(pos + segment_samples, total_samples)
         chunk = waveform[:, pos:end]
 
-        # Skip very short segments (less than 0.5s)
-        if chunk.shape[1] < SAMPLE_RATE * 0.5:
+        # Skip very short segments (less than 1s)
+        if chunk.shape[1] < SAMPLE_RATE:
             break
+
+        # Skip silent segments
+        energy = float(torch.sqrt(torch.mean(chunk ** 2)))
+        if energy < ENERGY_THRESHOLD:
+            pos += step_samples
+            continue
 
         # Pad short segments
         if chunk.shape[1] < segment_samples:
@@ -89,12 +100,13 @@ def _extract_embeddings(
 def _cluster_speakers(
     segments: list[tuple[float, float, np.ndarray]],
     num_speakers: int | None = None,
-    threshold: float = 0.7,
+    threshold: float = 1.2,
 ) -> list[SpeakerSegment]:
     """Cluster embeddings to identify speakers.
 
-    If num_speakers is None, automatically determines the number
-    using the distance threshold.
+    Uses cosine distance with average linkage for better speaker separation.
+    If num_speakers is provided, forces exactly that many clusters.
+    Otherwise, uses the distance threshold to determine cluster count.
     """
     if not segments:
         return []
@@ -104,15 +116,11 @@ def _cluster_speakers(
     if len(embeddings) == 1:
         return [SpeakerSegment(segments[0][0], segments[0][1], "Speaker 1")]
 
-    # Hierarchical clustering with cosine distance
-    # Normalize embeddings for cosine similarity
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms = np.where(norms == 0, 1, norms)
-    embeddings_norm = embeddings / norms
+    # Compute cosine distances and cluster with average linkage
+    distances = pdist(embeddings, metric="cosine")
+    linkage_matrix = linkage(distances, method="average")
 
-    linkage_matrix = linkage(embeddings_norm, method="ward")
-
-    if num_speakers:
+    if num_speakers and num_speakers > 0:
         labels = fcluster(linkage_matrix, t=num_speakers, criterion="maxclust")
     else:
         labels = fcluster(linkage_matrix, t=threshold, criterion="distance")
@@ -145,7 +153,7 @@ def diarize(
 
     log.info("Extracting speaker embeddings...")
     segments = _extract_embeddings(waveform, model)
-    log.info("Extracted %d segment embeddings", len(segments))
+    log.info("Extracted %d segment embeddings (silent segments skipped)", len(segments))
 
     log.info("Clustering speakers...")
     speaker_segments = _cluster_speakers(segments, num_speakers=num_speakers)
@@ -175,7 +183,6 @@ def assign_speakers_to_transcript(
     for tseg in transcript_segments:
         t_start = tseg.start
         t_end = tseg.end
-        t_mid = (t_start + t_end) / 2.0
 
         # Find the speaker segment that best overlaps with this transcript segment
         best_speaker = "Unknown"
