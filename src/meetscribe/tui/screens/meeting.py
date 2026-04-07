@@ -29,6 +29,7 @@ from textual.widgets import (
     Footer,
     Header,
     Label,
+    LoadingIndicator,
     Markdown,
     Select,
     Static,
@@ -43,6 +44,16 @@ from meetscribe.transcription.whisper import AVAILABLE_MODELS
 
 class MeetingScreen(Screen):
     """View and manage meeting artifacts: recording, transcript, summary, memos."""
+
+    CSS = """
+    #transcript-loading, #summary-loading {
+        display: none;
+        height: 3;
+    }
+    #transcript-loading.visible, #summary-loading.visible {
+        display: block;
+    }
+    """
 
     BINDINGS = [
         ("escape", "go_back", "Back"),
@@ -96,6 +107,7 @@ class MeetingScreen(Screen):
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
             ),
+            LoadingIndicator(id="transcript-loading"),
             Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
         )
 
@@ -111,6 +123,7 @@ class MeetingScreen(Screen):
                 Button("Regenerate", id="regenerate-summary-btn"),
                 Button("Refresh Models", id="refresh-models-btn"),
             ),
+            LoadingIndicator(id="summary-loading"),
             Markdown("*No summary yet. Select a template and model, then click Summarize.*", id="summary-view"),
         )
 
@@ -194,14 +207,22 @@ class MeetingScreen(Screen):
         model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
         self._run_transcription(model_name)
 
+    def _show_loading(self, widget_id: str) -> None:
+        self.query_one(f"#{widget_id}").add_class("visible")
+
+    def _hide_loading(self, widget_id: str) -> None:
+        self.query_one(f"#{widget_id}").remove_class("visible")
+
     @work(thread=True)
     def _run_transcription(self, model_name: str) -> None:
+        self.app.call_from_thread(self._show_loading, "transcript-loading")
         self.app.call_from_thread(self.notify, f"Transcribing with {model_name}...")
         config = self.app.config
         storage = MeetingStorage(config.vault.root, config.vault.meetings_folder)
         recording_path = self._find_recording()
 
         if not recording_path:
+            self.app.call_from_thread(self._hide_loading, "transcript-loading")
             self.app.call_from_thread(self.notify, "No recording found.", severity="error")
             return
 
@@ -225,6 +246,8 @@ class MeetingScreen(Screen):
             log.exception("Transcription failed")
             msg = f"Transcription failed. See log: {self.app.log_file}"
             self.app.call_from_thread(self.notify, msg, severity="error")
+        finally:
+            self.app.call_from_thread(self._hide_loading, "transcript-loading")
 
     @on(Button.Pressed, "#summarize-btn")
     @on(Button.Pressed, "#regenerate-summary-btn")
@@ -251,6 +274,7 @@ class MeetingScreen(Screen):
 
     @work(thread=True)
     def _run_summarization(self, template_name: str, provider: str, model: str) -> None:
+        self.app.call_from_thread(self._show_loading, "summary-loading")
         self.app.call_from_thread(self.notify, f"Summarizing with {provider}/{model}...")
         config = self.app.config
 
@@ -315,6 +339,8 @@ class MeetingScreen(Screen):
             log.exception("Summarization failed")
             msg = f"Summarization failed. See log: {self.app.log_file}"
             self.app.call_from_thread(self.notify, msg, severity="error")
+        finally:
+            self.app.call_from_thread(self._hide_loading, "summary-loading")
 
     @on(Button.Pressed, "#save-memos-btn")
     def save_memos(self) -> None:

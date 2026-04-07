@@ -99,7 +99,7 @@ def transcribe_audio(
         log.info("Model not cached, downloading %s (this may take a minute)...", model_name)
         model = WhisperModel(model_name, device="cpu", compute_type="int8")
 
-    segments, info = model.transcribe(str(audio_path), beam_size=5, vad_filter=True)
+    segments, info = model.transcribe(str(audio_path), beam_size=5, vad_filter=True, language="en")
     segment_list = list(segments)
 
     duration = _format_duration(info.duration)
