@@ -20,3 +20,5 @@ Summarize the following meeting transcript as a standup summary.
 
 {{ memos }}
 {% endif %}
+
+Provide any action items.

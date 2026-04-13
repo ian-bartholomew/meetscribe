@@ -23,4 +23,4 @@ Please provide:
 3. Stakeholders and Roles
 4. Timeline and Milestones
 5. Risks and Dependencies
-6. Next Steps
+6. Next Steps and/or Action Items

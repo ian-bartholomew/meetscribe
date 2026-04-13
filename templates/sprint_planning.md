@@ -23,3 +23,4 @@ Please provide:
 3. Capacity and Availability: Team availability and capacity estimates
 4. Dependencies and Risks: External dependencies and potential risks
 5. Definition of done: Acceptance Criteria and completion standards
+6. Action Items (If any)
