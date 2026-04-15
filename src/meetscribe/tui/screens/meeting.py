@@ -354,6 +354,10 @@ class MeetingScreen(Screen):
             self._pending_cluster_embeddings = cluster_embeddings
             self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
 
+            if not cluster_embeddings:
+                # Clear stale speaker mapping if re-transcribing without diarization
+                self.app.call_from_thread(self._clear_speaker_mapping)
+
             if cluster_embeddings:
                 speakers_path = CONFIG_DIR / "speakers.json"
                 registry = SpeakerRegistry(speakers_path)
@@ -375,6 +379,15 @@ class MeetingScreen(Screen):
             self.app.call_from_thread(self.notify, msg, severity="error")
         finally:
             self.app.call_from_thread(self._hide_loading, "transcript-loading")
+
+    def _clear_speaker_mapping(self) -> None:
+        """Hide and reset the speaker mapping section."""
+        collapsible = self.query_one("#speaker-mapping", Collapsible)
+        for widget in list(collapsible.query(".speaker-row")):
+            widget.remove()
+        collapsible.remove_class("visible")
+        self._speaker_labels = []
+        self._pending_cluster_embeddings = None
 
     def _populate_speaker_mapping(self, speaker_labels: list[str], suggestions: dict[str, str] | None = None) -> None:
         suggestions = suggestions or {}
