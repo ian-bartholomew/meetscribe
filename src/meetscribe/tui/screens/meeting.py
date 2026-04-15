@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -224,6 +225,19 @@ class MeetingScreen(Screen):
             suggestions = {label: info["name"] for label, info in speaker_map.items()}
             self._populate_speaker_mapping(labels, suggestions)
             self.query_one("#speaker-mapping", Collapsible).collapsed = True
+        elif not speaker_map:
+            # Check existing transcript for speaker labels (supports pre-feature meetings)
+            self._detect_speakers_from_transcript()
+
+    def _detect_speakers_from_transcript(self) -> None:
+        """Detect speaker labels from an existing diarized transcript."""
+        for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
+            content = f.read_text()
+            labels = sorted(set(re.findall(r"\*\*(.+?):\*\*", content)))
+            if labels:
+                self._populate_speaker_mapping(labels)
+                self.query_one("#speaker-mapping", Collapsible).collapsed = True
+            break
 
     def _load_existing_transcript(self) -> None:
         """Load the most recent transcript if one exists."""
