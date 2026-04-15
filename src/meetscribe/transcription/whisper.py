@@ -117,12 +117,14 @@ def transcribe_audio(
     enable_diarization: bool = False,
     num_speakers: int | None = None,
     on_segment: callable | None = None,
+    custom_vocabulary: list[str] | None = None,
 ) -> str:
     """Transcribe an audio file and return formatted markdown transcript.
 
     Args:
         on_segment: Optional callback called with (segment_index, timestamp, text)
                     after each segment is transcribed. Use for live UI updates.
+        custom_vocabulary: Optional list of words/phrases to prime the model with.
     """
     import time as _time
     t0 = _time.monotonic()
@@ -133,7 +135,11 @@ def transcribe_audio(
 
     log.info("Starting transcription of %s", audio_path)
     t1 = _time.monotonic()
-    segments, info = model.transcribe(str(audio_path), beam_size=5, vad_filter=True, language="en")
+    initial_prompt = ", ".join(custom_vocabulary) if custom_vocabulary else None
+    segments, info = model.transcribe(
+        str(audio_path), beam_size=5, vad_filter=True, language="en",
+        initial_prompt=initial_prompt,
+    )
     log.info("Transcribe call returned (generator ready) in %.1fs", _time.monotonic() - t1)
 
     # Stream segments — call on_segment as each one arrives

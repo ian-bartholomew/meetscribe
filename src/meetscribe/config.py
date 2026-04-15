@@ -26,6 +26,7 @@ class AudioConfig:
 @dataclass
 class TranscriptionConfig:
     default_model: str = "base"
+    custom_vocabulary: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,6 +75,7 @@ def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
         },
         "transcription": {
             "default_model": cfg.transcription.default_model,
+            "custom_vocabulary": cfg.transcription.custom_vocabulary,
         },
         "summarization": {
             "default_provider": cfg.summarization.default_provider,
