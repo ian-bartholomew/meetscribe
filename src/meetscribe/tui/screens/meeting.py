@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -21,6 +22,8 @@ def _find_templates_dir() -> Path:
     return Path(__file__).parent.parent.parent.parent / "templates"
 
 
+from rich.text import Text
+
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
@@ -34,6 +37,7 @@ from textual.widgets import (
     Label,
     LoadingIndicator,
     Markdown,
+    RichLog,
     Select,
     Static,
     TabPane,
@@ -45,6 +49,55 @@ from meetscribe.storage.vault import MeetingInfo, MeetingStorage, load_metadata,
 from meetscribe.storage.speakers import SpeakerRegistry, match_speakers, rewrite_transcript
 from meetscribe.config import CONFIG_DIR
 from meetscribe.transcription.whisper import AVAILABLE_MODELS
+
+# Dark background colors that work well with white text
+SPEAKER_COLORS = [
+    "#1a3a5c",  # blue
+    "#1a4a2c",  # green
+    "#4a1a4a",  # purple
+    "#5c2a1a",  # red
+    "#1a4a4a",  # teal
+    "#5c3a1a",  # orange
+    "#2a1a5c",  # indigo
+    "#3a4a1a",  # olive
+    "#1a2a4a",  # navy
+    "#4a3a1a",  # brown
+]
+
+
+def _write_transcript_to_richlog(richlog: RichLog, content: str) -> None:
+    """Parse transcript markdown and write speaker-colored lines to a RichLog."""
+    richlog.clear()
+
+    # Build speaker → color mapping from order of appearance
+    speaker_color_map: dict[str, str] = {}
+    current_speaker: str | None = None
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Detect speaker header: **Name:**
+        if stripped.startswith("**") and stripped.endswith(":**"):
+            speaker_name = stripped[2:-3]
+            if speaker_name not in speaker_color_map:
+                idx = len(speaker_color_map) % len(SPEAKER_COLORS)
+                speaker_color_map[speaker_name] = SPEAKER_COLORS[idx]
+            current_speaker = speaker_name
+            text = Text(f"\n{speaker_name}", style=f"bold white on {speaker_color_map[speaker_name]}")
+            richlog.write(text)
+        elif stripped.startswith("---") or stripped.startswith("meeting:") or stripped.startswith("date:") or stripped.startswith("model:") or stripped.startswith("duration:"):
+            # Skip frontmatter
+            continue
+        elif current_speaker and stripped.startswith("["):
+            # Transcript line with timestamp
+            bg = speaker_color_map[current_speaker]
+            text = Text(f" {stripped}", style=f"white on {bg}")
+            richlog.write(text)
+        elif not current_speaker:
+            # Non-diarized transcript or other content
+            richlog.write(Text(stripped))
 
 
 class MeetingScreen(Screen):
@@ -77,12 +130,9 @@ class MeetingScreen(Screen):
         width: 14;
     }
     #speaker-mapping {
-        display: none;
         height: auto;
-        max-height: 15;
-    }
-    #speaker-mapping.visible {
-        display: block;
+        max-height: 50%;
+        overflow-y: auto;
     }
     .speaker-row {
         height: 3;
@@ -98,6 +148,9 @@ class MeetingScreen(Screen):
     .match-indicator {
         width: 12;
         content-align-vertical: middle;
+    }
+    #transcript-editor {
+        height: 1fr;
     }
     """
 
@@ -168,6 +221,7 @@ class MeetingScreen(Screen):
                 Input(placeholder="# speakers", id="num-speakers", max_length=2),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
+                Button("Edit", id="edit-transcript-btn"),
                 classes="controls-bar",
             ),
             Collapsible(
@@ -178,7 +232,8 @@ class MeetingScreen(Screen):
                 collapsed=True,
             ),
             LoadingIndicator(id="transcript-loading"),
-            Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
+            RichLog(id="transcript-view", highlight=False, markup=False),
+            TextArea(id="transcript-editor"),
         )
 
     def _compose_summary_tab(self) -> Vertical:
@@ -206,6 +261,8 @@ class MeetingScreen(Screen):
         )
 
     def on_mount(self) -> None:
+        self.query_one("#speaker-mapping", Collapsible).display = False
+        self.query_one("#transcript-editor", TextArea).display = False
         self._load_existing_transcript()
         self._load_existing_summary()
         self._load_memos()
@@ -224,12 +281,24 @@ class MeetingScreen(Screen):
             suggestions = {label: info["name"] for label, info in speaker_map.items()}
             self._populate_speaker_mapping(labels, suggestions)
             self.query_one("#speaker-mapping", Collapsible).collapsed = True
+        else:
+            self._detect_speakers_from_transcript()
+
+    def _detect_speakers_from_transcript(self) -> None:
+        """Detect speaker labels from an existing diarized transcript."""
+        for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
+            content = f.read_text()
+            labels = sorted(set(re.findall(r"\*\*(.+?):\*\*", content)))
+            if labels:
+                self._populate_speaker_mapping(labels)
+                self.query_one("#speaker-mapping", Collapsible).collapsed = True
+            break
 
     def _load_existing_transcript(self) -> None:
         """Load the most recent transcript if one exists."""
         for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
             content = f.read_text()
-            self.query_one("#transcript-view", Markdown).update(content)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), content)
             break
 
     def _load_existing_summary(self) -> None:
@@ -285,6 +354,38 @@ class MeetingScreen(Screen):
         if provider_select.value and provider_select.value != Select.BLANK:
             self._fetch_models(str(provider_select.value))
 
+    @on(Button.Pressed, "#edit-transcript-btn")
+    def do_toggle_edit_transcript(self) -> None:
+        """Toggle between colored view and editable text editor."""
+        btn = self.query_one("#edit-transcript-btn", Button)
+        richlog = self.query_one("#transcript-view", RichLog)
+        editor = self.query_one("#transcript-editor", TextArea)
+
+        if editor.display:
+            # Save and switch back to colored view
+            updated_text = editor.text
+            transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+            if transcripts:
+                transcripts[0].write_text(updated_text)
+            _write_transcript_to_richlog(richlog, updated_text)
+            editor.display = False
+            richlog.display = True
+            btn.label = "Edit"
+            self.notify("Transcript saved.")
+            # Re-detect speakers in case labels changed
+            self._detect_speakers_from_transcript()
+        else:
+            # Load transcript into editor
+            transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+            if not transcripts:
+                self.notify("No transcript to edit.", severity="error")
+                return
+            content = transcripts[0].read_text()
+            editor.load_text(content)
+            richlog.display = False
+            editor.display = True
+            btn.label = "Save"
+
     @on(Button.Pressed, "#transcribe-btn")
     @on(Button.Pressed, "#regenerate-transcript-btn")
     def do_transcribe(self) -> None:
@@ -330,10 +431,9 @@ class MeetingScreen(Screen):
             live_lines: list[str] = []
 
             def on_segment(idx: int, timestamp: str, text: str) -> None:
-                live_lines.append(f"[{timestamp}] {text}\n")
-                preview = "\n".join(live_lines)
+                live_lines.append(f"[{timestamp}] {text}")
                 self.app.call_from_thread(
-                    self.query_one("#transcript-view", Markdown).update, preview
+                    self.query_one("#transcript-view", RichLog).write, f"[{timestamp}] {text}"
                 )
 
             transcript, cluster_embeddings = transcribe_audio(
@@ -352,7 +452,9 @@ class MeetingScreen(Screen):
             log.info("Transcription saved to %s", transcript_path)
 
             self._pending_cluster_embeddings = cluster_embeddings
-            self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
+            self.app.call_from_thread(
+                _write_transcript_to_richlog, self.query_one("#transcript-view", RichLog), transcript
+            )
 
             if not cluster_embeddings:
                 # Clear stale speaker mapping if re-transcribing without diarization
@@ -385,7 +487,7 @@ class MeetingScreen(Screen):
         collapsible = self.query_one("#speaker-mapping", Collapsible)
         for widget in list(collapsible.query(".speaker-row")):
             widget.remove()
-        collapsible.remove_class("visible")
+        collapsible.display = False
         self._speaker_labels = []
         self._pending_cluster_embeddings = None
         # Clear stale speaker_map from metadata
@@ -413,7 +515,7 @@ class MeetingScreen(Screen):
             )
             collapsible.mount(row, before=apply_btn)
         self._speaker_labels = speaker_labels
-        collapsible.add_class("visible")
+        collapsible.display = True
         collapsible.collapsed = False
 
     @on(Button.Pressed, "#apply-speakers-btn")
@@ -468,7 +570,7 @@ class MeetingScreen(Screen):
             transcript_text = transcripts[0].read_text()
             updated = rewrite_transcript(transcript_text, rewrite_map)
             transcripts[0].write_text(updated)
-            self.query_one("#transcript-view", Markdown).update(updated)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), updated)
         save_metadata(self.meeting.path, {"speaker_map": speaker_map})
         for widget in collapsible.query(".match-indicator"):
             widget.update("")
