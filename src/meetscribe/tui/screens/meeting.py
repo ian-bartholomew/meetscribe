@@ -27,6 +27,7 @@ from textual.screen import Screen
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     Footer,
     Header,
     Input,
@@ -41,6 +42,8 @@ from textual.widgets import (
 )
 
 from meetscribe.storage.vault import MeetingInfo, MeetingStorage, load_metadata, save_metadata
+from meetscribe.storage.speakers import SpeakerRegistry, match_speakers, rewrite_transcript
+from meetscribe.config import CONFIG_DIR
 from meetscribe.transcription.whisper import AVAILABLE_MODELS
 
 
@@ -73,6 +76,29 @@ class MeetingScreen(Screen):
     #num-speakers {
         width: 14;
     }
+    #speaker-mapping {
+        display: none;
+        height: auto;
+        max-height: 15;
+    }
+    #speaker-mapping.visible {
+        display: block;
+    }
+    .speaker-row {
+        height: 3;
+        layout: horizontal;
+    }
+    .speaker-label {
+        width: 20;
+        content-align-vertical: middle;
+    }
+    .speaker-input {
+        width: 1fr;
+    }
+    .match-indicator {
+        width: 12;
+        content-align-vertical: middle;
+    }
     """
 
     BINDINGS = [
@@ -84,6 +110,8 @@ class MeetingScreen(Screen):
     def __init__(self, meeting: MeetingInfo) -> None:
         super().__init__()
         self.meeting = meeting
+        self._pending_cluster_embeddings: dict[str, list[float]] | None = None
+        self._speaker_labels: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -142,6 +170,13 @@ class MeetingScreen(Screen):
                 Button("Regenerate", id="regenerate-transcript-btn"),
                 classes="controls-bar",
             ),
+            Collapsible(
+                Static("No speakers detected yet.", id="speaker-mapping-content"),
+                Button("Apply Names", id="apply-speakers-btn", variant="primary"),
+                title="Speaker Mapping",
+                id="speaker-mapping",
+                collapsed=True,
+            ),
             LoadingIndicator(id="transcript-loading"),
             Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
         )
@@ -183,6 +218,12 @@ class MeetingScreen(Screen):
         num_speakers = meta.get("num_speakers")
         if num_speakers is not None:
             self.query_one("#num-speakers", Input).value = str(num_speakers)
+        speaker_map = meta.get("speaker_map")
+        if speaker_map:
+            labels = sorted(speaker_map.keys())
+            suggestions = {label: info["name"] for label, info in speaker_map.items()}
+            self._populate_speaker_mapping(labels, suggestions)
+            self.query_one("#speaker-mapping", Collapsible).collapsed = True
 
     def _load_existing_transcript(self) -> None:
         """Load the most recent transcript if one exists."""
@@ -295,7 +336,7 @@ class MeetingScreen(Screen):
                     self.query_one("#transcript-view", Markdown).update, preview
                 )
 
-            transcript = transcribe_audio(
+            transcript, cluster_embeddings = transcribe_audio(
                 audio_path=recording_path,
                 model_name=model_name,
                 meeting_name=self.meeting.name,
@@ -310,8 +351,25 @@ class MeetingScreen(Screen):
             transcript_path.write_text(transcript)
             log.info("Transcription saved to %s", transcript_path)
 
-            # Final update with full formatted transcript (includes frontmatter + diarization)
+            self._pending_cluster_embeddings = cluster_embeddings
             self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
+
+            if not cluster_embeddings:
+                # Clear stale speaker mapping if re-transcribing without diarization
+                self.app.call_from_thread(self._clear_speaker_mapping)
+
+            if cluster_embeddings:
+                speakers_path = CONFIG_DIR / "speakers.json"
+                registry = SpeakerRegistry(speakers_path)
+                import numpy as np
+                np_embeddings = {
+                    label: np.array(emb) for label, emb in cluster_embeddings.items()
+                }
+                matches = match_speakers(np_embeddings, registry)
+                suggestions = {label: profile.name for label, profile in matches.items()}
+                labels = sorted(cluster_embeddings.keys())
+                self.app.call_from_thread(self._populate_speaker_mapping, labels, suggestions)
+
             elapsed = _time.monotonic() - t_start
             m, s = divmod(int(elapsed), 60)
             self.app.call_from_thread(self.notify, f"Transcription complete! ({m}m {s}s)")
@@ -321,6 +379,100 @@ class MeetingScreen(Screen):
             self.app.call_from_thread(self.notify, msg, severity="error")
         finally:
             self.app.call_from_thread(self._hide_loading, "transcript-loading")
+
+    def _clear_speaker_mapping(self) -> None:
+        """Hide and reset the speaker mapping section."""
+        collapsible = self.query_one("#speaker-mapping", Collapsible)
+        for widget in list(collapsible.query(".speaker-row")):
+            widget.remove()
+        collapsible.remove_class("visible")
+        self._speaker_labels = []
+        self._pending_cluster_embeddings = None
+        # Clear stale speaker_map from metadata
+        save_metadata(self.meeting.path, {"speaker_map": {}})
+
+    def _populate_speaker_mapping(self, speaker_labels: list[str], suggestions: dict[str, str] | None = None) -> None:
+        suggestions = suggestions or {}
+        collapsible = self.query_one("#speaker-mapping", Collapsible)
+        for widget in list(collapsible.query(".speaker-row")):
+            widget.remove()
+        try:
+            collapsible.query_one("#speaker-mapping-content").remove()
+        except Exception:
+            pass
+        apply_btn = collapsible.query_one("#apply-speakers-btn", Button)
+        for label in speaker_labels:
+            suggested = suggestions.get(label, "")
+            indicator = "(matched)" if suggested else ""
+            row = Horizontal(
+                Static(f"{label} →", classes="speaker-label"),
+                Input(value=suggested, placeholder="Enter name",
+                      id=f"speaker-input-{label.replace(' ', '-').lower()}", classes="speaker-input"),
+                Static(indicator, classes="match-indicator"),
+                classes="speaker-row",
+            )
+            collapsible.mount(row, before=apply_btn)
+        self._speaker_labels = speaker_labels
+        collapsible.add_class("visible")
+        collapsible.collapsed = False
+
+    @on(Button.Pressed, "#apply-speakers-btn")
+    def do_apply_speaker_names(self) -> None:
+        if not self._speaker_labels:
+            self.notify("No speakers to map.", severity="error")
+            return
+        collapsible = self.query_one("#speaker-mapping", Collapsible)
+        speakers_path = CONFIG_DIR / "speakers.json"
+        registry = SpeakerRegistry(speakers_path)
+        speaker_map: dict[str, dict] = {}
+        rewrite_map: dict[str, str] = {}
+        metadata = load_metadata(self.meeting.path)
+        existing_map = metadata.get("speaker_map", {})
+
+        for label in self._speaker_labels:
+            input_id = f"speaker-input-{label.replace(' ', '-').lower()}"
+            try:
+                name = self.query_one(f"#{input_id}", Input).value.strip()
+            except Exception:
+                continue
+            if not name:
+                continue
+            import numpy as np
+            matched_profile = None
+            if self._pending_cluster_embeddings and label in self._pending_cluster_embeddings:
+                np_emb = np.array(self._pending_cluster_embeddings[label])
+                matches = match_speakers({label: np_emb}, registry)
+                if label in matches and matches[label].name == name:
+                    matched_profile = matches[label]
+            if not matched_profile:
+                for s in registry.list_speakers():
+                    if s.name == name:
+                        matched_profile = s
+                        break
+            if not matched_profile:
+                matched_profile = registry.create_speaker(name)
+            if self._pending_cluster_embeddings and label in self._pending_cluster_embeddings:
+                meeting_ref = f"{self.meeting.date}/{self.meeting.name}"
+                registry.add_embedding(matched_profile.id, self._pending_cluster_embeddings[label], meeting_ref)
+            current_label = label
+            if label in existing_map:
+                current_label = existing_map[label].get("name", label)
+            rewrite_map[current_label] = name
+            speaker_map[label] = {"speaker_id": matched_profile.id, "name": name, "original_label": label}
+
+        if not rewrite_map:
+            self.notify("No names entered.", severity="warning")
+            return
+        transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+        if transcripts:
+            transcript_text = transcripts[0].read_text()
+            updated = rewrite_transcript(transcript_text, rewrite_map)
+            transcripts[0].write_text(updated)
+            self.query_one("#transcript-view", Markdown).update(updated)
+        save_metadata(self.meeting.path, {"speaker_map": speaker_map})
+        for widget in collapsible.query(".match-indicator"):
+            widget.update("")
+        self.notify("Speaker names applied!")
 
     def _select_value(self, select: Select) -> str | None:
         """Get a Select widget's value as a string, or None if unselected."""

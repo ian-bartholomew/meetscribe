@@ -118,7 +118,7 @@ def transcribe_audio(
     num_speakers: int | None = None,
     on_segment: callable | None = None,
     custom_vocabulary: list[str] | None = None,
-) -> str:
+) -> tuple[str, dict | None]:
     """Transcribe an audio file and return formatted markdown transcript.
 
     Args:
@@ -160,14 +160,18 @@ def transcribe_audio(
              len(segment_list), duration, _time.monotonic() - t0)
 
     speaker_labels = None
+    cluster_embeddings = None
     if enable_diarization:
         log.info("Running speaker diarization...")
         from meetscribe.transcription.diarize import diarize, assign_speakers_to_transcript
-        speaker_segments = diarize(audio_path, num_speakers=num_speakers)
-        speaker_labels = assign_speakers_to_transcript(segment_list, speaker_segments)
+        diarization_result = diarize(audio_path, num_speakers=num_speakers)
+        speaker_labels = assign_speakers_to_transcript(segment_list, diarization_result.segments)
+        cluster_embeddings = {
+            label: emb.tolist() for label, emb in diarization_result.cluster_embeddings.items()
+        }
         log.info("Diarization complete")
 
-    return format_transcript(
+    transcript = format_transcript(
         segments=segment_list,
         meeting_name=meeting_name,
         meeting_date=meeting_date,
@@ -175,3 +179,4 @@ def transcribe_audio(
         duration=duration,
         speaker_labels=speaker_labels,
     )
+    return transcript, cluster_embeddings

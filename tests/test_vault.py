@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from meetscribe.storage.vault import MeetingStorage
+from meetscribe.storage.vault import MeetingStorage, load_metadata, save_metadata
 
 
 @pytest.fixture
@@ -63,3 +63,44 @@ class TestListMeetings:
         # Most recent first
         assert meetings[0].date == date(2026, 4, 6)
         assert meetings[-1].date == date(2026, 3, 15)
+
+
+class TestMetadataSpeakerMap:
+    def test_save_and_load_speaker_map(self, vault):
+        path = vault.ensure_meeting_dir("Standup", date(2026, 4, 6))
+        speaker_map = {
+            "Speaker 1": {
+                "speaker_id": "sp_aaaaaa",
+                "name": "Alice",
+                "original_label": "Speaker 1",
+            }
+        }
+        save_metadata(path, {"speaker_map": speaker_map})
+        loaded = load_metadata(path)
+        assert loaded["speaker_map"] == speaker_map
+
+    def test_load_old_metadata_without_speaker_map(self, vault):
+        path = vault.ensure_meeting_dir("Standup", date(2026, 4, 6))
+        save_metadata(path, {"meeting_name": "Standup", "num_speakers": 3})
+        loaded = load_metadata(path)
+        assert loaded.get("speaker_map") is None
+        assert loaded["num_speakers"] == 3
+
+    def test_speaker_map_round_trip_preserves_original_label(self, vault):
+        path = vault.ensure_meeting_dir("Standup", date(2026, 4, 6))
+        speaker_map = {
+            "Speaker 1": {
+                "speaker_id": "sp_aaaaaa",
+                "name": "Alice",
+                "original_label": "Speaker 1",
+            },
+            "Speaker 2": {
+                "speaker_id": "sp_bbbbbb",
+                "name": "Bob",
+                "original_label": "Speaker 2",
+            },
+        }
+        save_metadata(path, {"speaker_map": speaker_map})
+        loaded = load_metadata(path)
+        for label, info in loaded["speaker_map"].items():
+            assert info["original_label"] == label

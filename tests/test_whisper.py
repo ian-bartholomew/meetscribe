@@ -61,7 +61,7 @@ class TestTranscribeAudio:
         mock_info = MagicMock(duration=10.0)
         mock_model.transcribe.return_value = ([seg1, seg2], mock_info)
 
-        result = transcribe_audio(
+        result, embeddings = transcribe_audio(
             audio_path=Path("/fake/recording.flac"),
             model_name="base",
             meeting_name="Standup",
@@ -70,6 +70,42 @@ class TestTranscribeAudio:
 
         assert "[00:00:00] Hello." in result
         assert "[00:00:05] World." in result
+        assert embeddings is None
         mock_model_cls.assert_called_once()
         call_args = mock_model_cls.call_args
         assert call_args[1] == {"device": "cpu", "compute_type": "int8"}
+
+
+class TestTranscribeAudioDiarization:
+    @patch("meetscribe.transcription.whisper._load_model")
+    @patch("meetscribe.transcription.diarize.diarize")
+    @patch("meetscribe.transcription.diarize.assign_speakers_to_transcript")
+    def test_returns_cluster_embeddings(self, mock_assign, mock_diarize, mock_load):
+        from meetscribe.transcription.diarize import DiarizationResult, SpeakerSegment
+
+        mock_model = MagicMock()
+        mock_load.return_value = mock_model
+        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello.")
+        mock_info = MagicMock(duration=5.0)
+        mock_model.transcribe.return_value = ([seg1], mock_info)
+
+        import numpy as np
+        cluster_embs = {"Speaker 1": np.array([0.1] * 192)}
+        mock_diarize.return_value = DiarizationResult(
+            segments=[SpeakerSegment(0.0, 5.0, "Speaker 1")],
+            cluster_embeddings=cluster_embs,
+        )
+        mock_assign.return_value = [("Speaker 1", "Hello.")]
+
+        result = transcribe_audio(
+            audio_path=Path("/fake/recording.flac"),
+            model_name="base",
+            meeting_name="Standup",
+            meeting_date="2026-04-06",
+            enable_diarization=True,
+        )
+
+        assert isinstance(result, tuple)
+        transcript_text, embeddings = result
+        assert "Speaker 1" in transcript_text
+        assert "Speaker 1" in embeddings
