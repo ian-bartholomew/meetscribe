@@ -216,3 +216,20 @@ def match_speakers(
                 result[label] = speaker
 
     return result
+
+
+def rewrite_transcript(transcript: str, speaker_map: dict[str, str]) -> str:
+    """Rewrite speaker labels in a markdown transcript.
+
+    Args:
+        transcript: The markdown transcript text.
+        speaker_map: Maps current name in transcript to new name.
+                     e.g., {"Speaker 1": "Alice"} or {"Alice": "Alice Smith"}
+
+    Returns:
+        The transcript with speaker labels replaced.
+    """
+    result = transcript
+    for old_name, new_name in speaker_map.items():
+        result = result.replace(f"**{old_name}:**", f"**{new_name}:**")
+    return result
