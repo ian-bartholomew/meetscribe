@@ -22,6 +22,8 @@ def _find_templates_dir() -> Path:
     return Path(__file__).parent.parent.parent.parent / "templates"
 
 
+from rich.text import Text
+
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
@@ -35,6 +37,7 @@ from textual.widgets import (
     Label,
     LoadingIndicator,
     Markdown,
+    RichLog,
     Select,
     Static,
     TabPane,
@@ -46,6 +49,55 @@ from meetscribe.storage.vault import MeetingInfo, MeetingStorage, load_metadata,
 from meetscribe.storage.speakers import SpeakerRegistry, match_speakers, rewrite_transcript
 from meetscribe.config import CONFIG_DIR
 from meetscribe.transcription.whisper import AVAILABLE_MODELS
+
+# Dark background colors that work well with white text
+SPEAKER_COLORS = [
+    "#1a3a5c",  # blue
+    "#1a4a2c",  # green
+    "#4a1a4a",  # purple
+    "#5c2a1a",  # red
+    "#1a4a4a",  # teal
+    "#5c3a1a",  # orange
+    "#2a1a5c",  # indigo
+    "#3a4a1a",  # olive
+    "#1a2a4a",  # navy
+    "#4a3a1a",  # brown
+]
+
+
+def _write_transcript_to_richlog(richlog: RichLog, content: str) -> None:
+    """Parse transcript markdown and write speaker-colored lines to a RichLog."""
+    richlog.clear()
+
+    # Build speaker → color mapping from order of appearance
+    speaker_color_map: dict[str, str] = {}
+    current_speaker: str | None = None
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Detect speaker header: **Name:**
+        if stripped.startswith("**") and stripped.endswith(":**"):
+            speaker_name = stripped[2:-3]
+            if speaker_name not in speaker_color_map:
+                idx = len(speaker_color_map) % len(SPEAKER_COLORS)
+                speaker_color_map[speaker_name] = SPEAKER_COLORS[idx]
+            current_speaker = speaker_name
+            text = Text(f"\n{speaker_name}", style=f"bold white on {speaker_color_map[speaker_name]}")
+            richlog.write(text)
+        elif stripped.startswith("---") or stripped.startswith("meeting:") or stripped.startswith("date:") or stripped.startswith("model:") or stripped.startswith("duration:"):
+            # Skip frontmatter
+            continue
+        elif current_speaker and stripped.startswith("["):
+            # Transcript line with timestamp
+            bg = speaker_color_map[current_speaker]
+            text = Text(f" {stripped}", style=f"white on {bg}")
+            richlog.write(text)
+        elif not current_speaker:
+            # Non-diarized transcript or other content
+            richlog.write(Text(stripped))
 
 
 class MeetingScreen(Screen):
@@ -175,7 +227,7 @@ class MeetingScreen(Screen):
                 collapsed=True,
             ),
             LoadingIndicator(id="transcript-loading"),
-            Markdown("*No transcript yet. Select a model and click Transcribe.*", id="transcript-view"),
+            RichLog(id="transcript-view", highlight=False, markup=False),
         )
 
     def _compose_summary_tab(self) -> Vertical:
@@ -239,7 +291,7 @@ class MeetingScreen(Screen):
         """Load the most recent transcript if one exists."""
         for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
             content = f.read_text()
-            self.query_one("#transcript-view", Markdown).update(content)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), content)
             break
 
     def _load_existing_summary(self) -> None:
@@ -340,10 +392,9 @@ class MeetingScreen(Screen):
             live_lines: list[str] = []
 
             def on_segment(idx: int, timestamp: str, text: str) -> None:
-                live_lines.append(f"[{timestamp}] {text}\n")
-                preview = "\n".join(live_lines)
+                live_lines.append(f"[{timestamp}] {text}")
                 self.app.call_from_thread(
-                    self.query_one("#transcript-view", Markdown).update, preview
+                    self.query_one("#transcript-view", RichLog).write, f"[{timestamp}] {text}"
                 )
 
             transcript, cluster_embeddings = transcribe_audio(
@@ -362,7 +413,9 @@ class MeetingScreen(Screen):
             log.info("Transcription saved to %s", transcript_path)
 
             self._pending_cluster_embeddings = cluster_embeddings
-            self.app.call_from_thread(self.query_one("#transcript-view", Markdown).update, transcript)
+            self.app.call_from_thread(
+                _write_transcript_to_richlog, self.query_one("#transcript-view", RichLog), transcript
+            )
 
             if not cluster_embeddings:
                 # Clear stale speaker mapping if re-transcribing without diarization
@@ -478,7 +531,7 @@ class MeetingScreen(Screen):
             transcript_text = transcripts[0].read_text()
             updated = rewrite_transcript(transcript_text, rewrite_map)
             transcripts[0].write_text(updated)
-            self.query_one("#transcript-view", Markdown).update(updated)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), updated)
         save_metadata(self.meeting.path, {"speaker_map": speaker_map})
         for widget in collapsible.query(".match-indicator"):
             widget.update("")
