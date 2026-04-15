@@ -49,3 +49,19 @@ class TestRewriteTranscript:
         transcript = "**Speaker 1:**\n[00:00:05] Hello\n"
         result = rewrite_transcript(transcript, {})
         assert result == transcript
+
+    def test_does_not_replace_name_in_body_text(self):
+        """Speaker name in transcript body should not be modified."""
+        transcript = (
+            "**Speaker 1:**\n"
+            "[00:00:05] Speaker 1 said something about the project\n\n"
+            "**Speaker 2:**\n"
+            "[00:00:10] I agree with Speaker 1\n\n"
+        )
+        speaker_map = {"Speaker 1": "Alice", "Speaker 2": "Bob"}
+        result = rewrite_transcript(transcript, speaker_map)
+        assert "**Alice:**" in result
+        assert "**Bob:**" in result
+        # Body text references should be unchanged
+        assert "Speaker 1 said something" in result
+        assert "I agree with Speaker 1" in result

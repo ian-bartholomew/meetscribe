@@ -110,7 +110,7 @@ class MeetingScreen(Screen):
     def __init__(self, meeting: MeetingInfo) -> None:
         super().__init__()
         self.meeting = meeting
-        self._pending_cluster_embeddings: dict | None = None
+        self._pending_cluster_embeddings: dict[str, list[float]] | None = None
         self._speaker_labels: list[str] = []
 
     def compose(self) -> ComposeResult:
@@ -388,6 +388,8 @@ class MeetingScreen(Screen):
         collapsible.remove_class("visible")
         self._speaker_labels = []
         self._pending_cluster_embeddings = None
+        # Clear stale speaker_map from metadata
+        save_metadata(self.meeting.path, {"speaker_map": {}})
 
     def _populate_speaker_mapping(self, speaker_labels: list[str], suggestions: dict[str, str] | None = None) -> None:
         suggestions = suggestions or {}
