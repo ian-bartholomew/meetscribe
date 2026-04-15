@@ -30,6 +30,12 @@ class SpeakerSegment:
     speaker: str
 
 
+@dataclass
+class DiarizationResult:
+    segments: list[SpeakerSegment]
+    cluster_embeddings: dict[str, np.ndarray]
+
+
 def _load_audio(audio_path: Path) -> torch.Tensor:
     """Load audio file and resample to 16kHz mono using soundfile + scipy."""
     data, sr = sf.read(str(audio_path), dtype="float32")
@@ -101,20 +107,25 @@ def _cluster_speakers(
     segments: list[tuple[float, float, np.ndarray]],
     num_speakers: int | None = None,
     threshold: float = 1.2,
-) -> list[SpeakerSegment]:
+) -> DiarizationResult:
     """Cluster embeddings to identify speakers.
 
     Uses cosine distance with average linkage for better speaker separation.
     If num_speakers is provided, forces exactly that many clusters.
     Otherwise, uses the distance threshold to determine cluster count.
+
+    Returns a DiarizationResult with segments and per-cluster mean embeddings.
     """
     if not segments:
-        return []
+        return DiarizationResult(segments=[], cluster_embeddings={})
 
     embeddings = np.array([s[2] for s in segments])
 
     if len(embeddings) == 1:
-        return [SpeakerSegment(segments[0][0], segments[0][1], "Speaker 1")]
+        return DiarizationResult(
+            segments=[SpeakerSegment(segments[0][0], segments[0][1], "Speaker 1")],
+            cluster_embeddings={"Speaker 1": embeddings[0]},
+        )
 
     # Compute cosine distances and cluster with average linkage
     distances = pdist(embeddings, metric="cosine")
@@ -125,20 +136,28 @@ def _cluster_speakers(
     else:
         labels = fcluster(linkage_matrix, t=threshold, criterion="distance")
 
-    result: list[SpeakerSegment] = []
+    result_segments: list[SpeakerSegment] = []
     for (start, end, _), label in zip(segments, labels):
-        result.append(SpeakerSegment(start, end, f"Speaker {label}"))
+        result_segments.append(SpeakerSegment(start, end, f"Speaker {label}"))
 
-    return result
+    # Compute mean embedding per cluster
+    cluster_embeddings: dict[str, np.ndarray] = {}
+    unique_labels = np.unique(labels)
+    for label in unique_labels:
+        speaker_key = f"Speaker {label}"
+        mask = labels == label
+        cluster_embeddings[speaker_key] = embeddings[mask].mean(axis=0)
+
+    return DiarizationResult(segments=result_segments, cluster_embeddings=cluster_embeddings)
 
 
 def diarize(
     audio_path: Path,
     num_speakers: int | None = None,
-) -> list[SpeakerSegment]:
+) -> DiarizationResult:
     """Run speaker diarization on an audio file.
 
-    Returns a list of SpeakerSegments with start/end times and speaker labels.
+    Returns a DiarizationResult with speaker segments and per-cluster embeddings.
     """
     log.info("Loading audio: %s", audio_path)
     waveform = _load_audio(audio_path)
@@ -156,13 +175,13 @@ def diarize(
     log.info("Extracted %d segment embeddings (silent segments skipped)", len(segments))
 
     log.info("Clustering speakers...")
-    speaker_segments = _cluster_speakers(segments, num_speakers=num_speakers)
+    result = _cluster_speakers(segments, num_speakers=num_speakers)
 
     # Count unique speakers
-    speakers = {s.speaker for s in speaker_segments}
+    speakers = {s.speaker for s in result.segments}
     log.info("Identified %d speakers", len(speakers))
 
-    return speaker_segments
+    return result
 
 
 def assign_speakers_to_transcript(
