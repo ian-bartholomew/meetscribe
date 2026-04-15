@@ -303,6 +303,7 @@ class MeetingScreen(Screen):
                 enable_diarization=enable_diarization,
                 num_speakers=num_speakers,
                 on_segment=on_segment,
+                custom_vocabulary=config.transcription.custom_vocabulary or None,
             )
 
             transcript_path = storage.transcript_path(self.meeting.name, self.meeting.date, model_name)

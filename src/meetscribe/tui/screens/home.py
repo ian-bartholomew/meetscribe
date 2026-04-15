@@ -69,7 +69,7 @@ class HomeScreen(Screen):
                 meeting.duration or "-",
                 "yes" if meeting.has_transcript else "-",
                 "yes" if meeting.has_summary else "-",
-                key=meeting.name,
+                key=f"{meeting.date}/{meeting.name}",
             )
 
     @on(Button.Pressed, "#new-recording")
@@ -222,6 +222,7 @@ class HomeScreen(Screen):
                     enable_diarization=bulk_config.enable_diarization and num_speakers is not None and num_speakers > 1,
                     num_speakers=num_speakers,
                     on_segment=on_segment,
+                    custom_vocabulary=config.transcription.custom_vocabulary or None,
                 )
                 transcript_path = storage.transcript_path(meeting.name, meeting.date, model_name)
                 transcript_path.write_text(transcript)
