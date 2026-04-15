@@ -131,7 +131,8 @@ class MeetingScreen(Screen):
     }
     #speaker-mapping {
         height: auto;
-        max-height: 15;
+        max-height: 50%;
+        overflow-y: auto;
     }
     .speaker-row {
         height: 3;
@@ -147,6 +148,9 @@ class MeetingScreen(Screen):
     .match-indicator {
         width: 12;
         content-align-vertical: middle;
+    }
+    #transcript-editor {
+        height: 1fr;
     }
     """
 
@@ -217,6 +221,7 @@ class MeetingScreen(Screen):
                 Input(placeholder="# speakers", id="num-speakers", max_length=2),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
                 Button("Regenerate", id="regenerate-transcript-btn"),
+                Button("Edit", id="edit-transcript-btn"),
                 classes="controls-bar",
             ),
             Collapsible(
@@ -228,6 +233,7 @@ class MeetingScreen(Screen):
             ),
             LoadingIndicator(id="transcript-loading"),
             RichLog(id="transcript-view", highlight=False, markup=False),
+            TextArea(id="transcript-editor"),
         )
 
     def _compose_summary_tab(self) -> Vertical:
@@ -256,6 +262,7 @@ class MeetingScreen(Screen):
 
     def on_mount(self) -> None:
         self.query_one("#speaker-mapping", Collapsible).display = False
+        self.query_one("#transcript-editor", TextArea).display = False
         self._load_existing_transcript()
         self._load_existing_summary()
         self._load_memos()
@@ -346,6 +353,38 @@ class MeetingScreen(Screen):
         provider_select = self.query_one("#provider-select", Select)
         if provider_select.value and provider_select.value != Select.BLANK:
             self._fetch_models(str(provider_select.value))
+
+    @on(Button.Pressed, "#edit-transcript-btn")
+    def do_toggle_edit_transcript(self) -> None:
+        """Toggle between colored view and editable text editor."""
+        btn = self.query_one("#edit-transcript-btn", Button)
+        richlog = self.query_one("#transcript-view", RichLog)
+        editor = self.query_one("#transcript-editor", TextArea)
+
+        if editor.display:
+            # Save and switch back to colored view
+            updated_text = editor.text
+            transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+            if transcripts:
+                transcripts[0].write_text(updated_text)
+            _write_transcript_to_richlog(richlog, updated_text)
+            editor.display = False
+            richlog.display = True
+            btn.label = "Edit"
+            self.notify("Transcript saved.")
+            # Re-detect speakers in case labels changed
+            self._detect_speakers_from_transcript()
+        else:
+            # Load transcript into editor
+            transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
+            if not transcripts:
+                self.notify("No transcript to edit.", severity="error")
+                return
+            content = transcripts[0].read_text()
+            editor.load_text(content)
+            richlog.display = False
+            editor.display = True
+            btn.label = "Save"
 
     @on(Button.Pressed, "#transcribe-btn")
     @on(Button.Pressed, "#regenerate-transcript-btn")
