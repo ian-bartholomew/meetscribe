@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 @dataclass
 class EmbeddingRecord:
@@ -138,3 +140,79 @@ class SpeakerRegistry:
             speaker.embeddings = speaker.embeddings[-MAX_EMBEDDINGS_PER_SPEAKER:]
         speaker.updated_at = _now_iso()
         self._save()
+
+
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def _speaker_centroid(speaker: SpeakerProfile) -> np.ndarray | None:
+    """Compute the centroid (mean) of a speaker's stored embeddings."""
+    if not speaker.embeddings:
+        return None
+    vectors = np.array([e.vector for e in speaker.embeddings])
+    return vectors.mean(axis=0)
+
+
+def match_speakers(
+    cluster_embeddings: dict[str, np.ndarray],
+    registry: SpeakerRegistry,
+) -> dict[str, SpeakerProfile]:
+    """Match cluster embeddings against known speaker profiles.
+
+    Args:
+        cluster_embeddings: Maps cluster label ("Speaker 1") to its average embedding.
+        registry: The global speaker registry.
+
+    Returns:
+        Dict mapping cluster label to matched SpeakerProfile. Only includes
+        matches above the registry's threshold. If two clusters match the same
+        speaker, only the highest-similarity match is kept.
+    """
+    speakers = registry.list_speakers()
+    threshold = registry.match_threshold
+
+    # Precompute centroids for all known speakers
+    centroids: dict[str, np.ndarray] = {}
+    for s in speakers:
+        c = _speaker_centroid(s)
+        if c is not None:
+            centroids[s.id] = c
+
+    if not centroids:
+        return {}
+
+    # For each cluster, find the best matching speaker
+    all_matches: list[tuple[str, str, float]] = []
+    for label, emb in cluster_embeddings.items():
+        best_id = ""
+        best_sim = -1.0
+        for sid, centroid in centroids.items():
+            sim = _cosine_similarity(np.array(emb), centroid)
+            if sim > best_sim:
+                best_sim = sim
+                best_id = sid
+        if best_sim >= threshold and best_id:
+            all_matches.append((label, best_id, best_sim))
+
+    # Resolve conflicts: if two clusters match the same speaker, keep highest similarity
+    best_per_speaker: dict[str, tuple[str, float]] = {}
+    for label, sid, sim in all_matches:
+        if sid not in best_per_speaker or sim > best_per_speaker[sid][1]:
+            best_per_speaker[sid] = (label, sim)
+
+    winning_labels = {label for label, _ in best_per_speaker.values()}
+
+    result: dict[str, SpeakerProfile] = {}
+    for label, sid, sim in all_matches:
+        if label in winning_labels:
+            speaker = registry.get_speaker(sid)
+            if speaker:
+                result[label] = speaker
+
+    return result
