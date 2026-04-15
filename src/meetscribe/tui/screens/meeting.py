@@ -78,12 +78,8 @@ class MeetingScreen(Screen):
         width: 14;
     }
     #speaker-mapping {
-        display: none;
         height: auto;
         max-height: 15;
-    }
-    #speaker-mapping.visible {
-        display: block;
     }
     .speaker-row {
         height: 3;
@@ -207,6 +203,7 @@ class MeetingScreen(Screen):
         )
 
     def on_mount(self) -> None:
+        self.query_one("#speaker-mapping", Collapsible).display = False
         self._load_existing_transcript()
         self._load_existing_summary()
         self._load_memos()
@@ -225,8 +222,7 @@ class MeetingScreen(Screen):
             suggestions = {label: info["name"] for label, info in speaker_map.items()}
             self._populate_speaker_mapping(labels, suggestions)
             self.query_one("#speaker-mapping", Collapsible).collapsed = True
-        elif not speaker_map:
-            # Check existing transcript for speaker labels (supports pre-feature meetings)
+        else:
             self._detect_speakers_from_transcript()
 
     def _detect_speakers_from_transcript(self) -> None:
@@ -399,7 +395,7 @@ class MeetingScreen(Screen):
         collapsible = self.query_one("#speaker-mapping", Collapsible)
         for widget in list(collapsible.query(".speaker-row")):
             widget.remove()
-        collapsible.remove_class("visible")
+        collapsible.display = False
         self._speaker_labels = []
         self._pending_cluster_embeddings = None
         # Clear stale speaker_map from metadata
@@ -427,7 +423,7 @@ class MeetingScreen(Screen):
             )
             collapsible.mount(row, before=apply_btn)
         self._speaker_labels = speaker_labels
-        collapsible.add_class("visible")
+        collapsible.display = True
         collapsible.collapsed = False
 
     @on(Button.Pressed, "#apply-speakers-btn")
