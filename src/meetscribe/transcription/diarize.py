@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 import torch
 
 log = logging.getLogger("meetscribe.diarize")
@@ -75,6 +76,15 @@ def _get_embedding_model(hf_token: str):
     return _embedding_model
 
 
+def _load_audio_for_pyannote(audio_path: Path) -> dict:
+    """Load audio as a waveform dict for pyannote (bypasses torchcodec)."""
+    data, sample_rate = sf.read(str(audio_path), dtype="float32")
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    waveform = torch.from_numpy(data).unsqueeze(0)
+    return {"waveform": waveform, "sample_rate": sample_rate}
+
+
 def diarize(
     audio_path: Path,
     num_speakers: int | None = None,
@@ -90,11 +100,12 @@ def diarize(
     pipeline = _get_pipeline(hf_token)
 
     log.info("Running diarization on %s", audio_path)
+    audio_input = _load_audio_for_pyannote(audio_path)
     kwargs = {}
     if num_speakers is not None and num_speakers > 0:
         kwargs["num_speakers"] = num_speakers
 
-    output = pipeline(str(audio_path), **kwargs)
+    output = pipeline(audio_input, **kwargs)
 
     # Use exclusive diarization (non-overlapping) for clean transcript assignment
     exclusive = output.exclusive_speaker_diarization
@@ -117,15 +128,19 @@ def diarize(
     # Extract per-speaker embeddings from longest segment
     cluster_embeddings: dict[str, np.ndarray] = {}
     embedding_model = _get_embedding_model(hf_token)
+    waveform = audio_input["waveform"]
+    sample_rate = audio_input["sample_rate"]
     for pyannote_label, our_label in label_map.items():
         speaker_segs = [s for s in segments if s.speaker == our_label]
         if not speaker_segs:
             continue
         longest = max(speaker_segs, key=lambda s: s.end - s.start)
         try:
-            from pyannote.core import Segment
-            crop = Segment(longest.start, longest.end)
-            embedding = embedding_model({"audio": str(audio_path), "start": crop.start, "end": crop.end})
+            start_sample = int(longest.start * sample_rate)
+            end_sample = int(longest.end * sample_rate)
+            crop_waveform = waveform[:, start_sample:end_sample]
+            emb_input = {"waveform": crop_waveform, "sample_rate": sample_rate}
+            embedding = embedding_model(emb_input)
             if hasattr(embedding, 'numpy'):
                 emb_np = embedding.squeeze().numpy()
             elif isinstance(embedding, np.ndarray):
@@ -134,7 +149,7 @@ def diarize(
                 emb_np = np.array(embedding).squeeze()
             cluster_embeddings[our_label] = emb_np
         except Exception:
-            log.warning("Failed to extract embedding for %s", our_label)
+            log.warning("Failed to extract embedding for %s", our_label, exc_info=True)
 
     log.info("Diarization complete")
     return DiarizationResult(segments=segments, cluster_embeddings=cluster_embeddings)

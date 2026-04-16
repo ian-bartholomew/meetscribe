@@ -126,13 +126,16 @@ class TestGetHfToken:
 
 
 class TestDiarize:
+    @patch("meetscribe.transcription.diarize._load_audio_for_pyannote")
     @patch("meetscribe.transcription.diarize._get_embedding_model")
     @patch("meetscribe.transcription.diarize._get_pipeline")
     @patch("meetscribe.transcription.diarize._get_hf_token")
-    def test_returns_diarization_result(self, mock_token, mock_pipeline_fn, mock_emb_fn):
+    def test_returns_diarization_result(self, mock_token, mock_pipeline_fn, mock_emb_fn, mock_load_audio):
         from pathlib import Path
+        import torch
 
         mock_token.return_value = "hf_fake"
+        mock_load_audio.return_value = {"waveform": torch.randn(1, 160000), "sample_rate": 16000}
 
         mock_pipeline = MagicMock()
         mock_pipeline_fn.return_value = mock_pipeline
@@ -168,13 +171,16 @@ class TestDiarize:
         assert len(result.cluster_embeddings) == 2
         mock_pipeline.assert_called_once()
 
+    @patch("meetscribe.transcription.diarize._load_audio_for_pyannote")
     @patch("meetscribe.transcription.diarize._get_embedding_model")
     @patch("meetscribe.transcription.diarize._get_pipeline")
     @patch("meetscribe.transcription.diarize._get_hf_token")
-    def test_passes_num_speakers(self, mock_token, mock_pipeline_fn, mock_emb_fn):
+    def test_passes_num_speakers(self, mock_token, mock_pipeline_fn, mock_emb_fn, mock_load_audio):
         from pathlib import Path
+        import torch
 
         mock_token.return_value = "hf_fake"
+        mock_load_audio.return_value = {"waveform": torch.randn(1, 160000), "sample_rate": 16000}
         mock_pipeline = MagicMock()
         mock_pipeline_fn.return_value = mock_pipeline
 
