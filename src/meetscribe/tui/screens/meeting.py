@@ -218,7 +218,6 @@ class MeetingScreen(Screen):
                 Select(model_options, value=default_model, id="whisper-model"),
                 Input(placeholder="# speakers", id="num-speakers", max_length=2),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
-                Button("Regenerate", id="regenerate-transcript-btn"),
                 Button("Edit", id="edit-transcript-btn"),
                 classes="controls-bar",
             ),
@@ -385,7 +384,6 @@ class MeetingScreen(Screen):
             btn.label = "Save"
 
     @on(Button.Pressed, "#transcribe-btn")
-    @on(Button.Pressed, "#regenerate-transcript-btn")
     def do_transcribe(self) -> None:
         model_select = self.query_one("#whisper-model", Select)
         model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
