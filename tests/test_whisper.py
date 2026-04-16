@@ -123,13 +123,15 @@ class TestFormatTranscriptWordLevel:
 class TestTranscribeAudioDiarization:
     @patch("meetscribe.transcription.whisper._load_model")
     @patch("meetscribe.transcription.diarize.diarize")
-    @patch("meetscribe.transcription.diarize.assign_speakers_to_transcript")
-    def test_returns_cluster_embeddings(self, mock_assign, mock_diarize, mock_load):
+    @patch("meetscribe.transcription.diarize.assign_speakers_to_words")
+    def test_returns_cluster_embeddings(self, mock_assign_words, mock_diarize, mock_load):
         from meetscribe.transcription.diarize import DiarizationResult, SpeakerSegment
 
         mock_model = MagicMock()
         mock_load.return_value = mock_model
-        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello.")
+
+        word1 = MagicMock(start=0.0, end=0.5, word=" Hello.")
+        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello.", words=[word1])
         mock_info = MagicMock(duration=5.0)
         mock_model.transcribe.return_value = ([seg1], mock_info)
 
@@ -139,7 +141,7 @@ class TestTranscribeAudioDiarization:
             segments=[SpeakerSegment(0.0, 5.0, "Speaker 1")],
             cluster_embeddings=cluster_embs,
         )
-        mock_assign.return_value = [("Speaker 1", "Hello.")]
+        mock_assign_words.return_value = [("Speaker 1", 0.0, "Hello.")]
 
         result = transcribe_audio(
             audio_path=Path("/fake/recording.flac"),
@@ -153,3 +155,98 @@ class TestTranscribeAudioDiarization:
         transcript_text, embeddings = result
         assert "Speaker 1" in transcript_text
         assert "Speaker 1" in embeddings
+
+
+class TestTranscribeAudioWordLevel:
+    @patch("meetscribe.transcription.whisper._load_model")
+    @patch("meetscribe.transcription.diarize.diarize")
+    @patch("meetscribe.transcription.diarize.assign_speakers_to_words")
+    def test_uses_word_level_assignment(self, mock_assign_words, mock_diarize, mock_load):
+        """When diarization is enabled, word_timestamps=True and assign_speakers_to_words is used."""
+        from meetscribe.transcription.diarize import DiarizationResult, SpeakerSegment
+
+        mock_model = MagicMock()
+        mock_load.return_value = mock_model
+
+        word1 = MagicMock(start=0.0, end=0.5, word=" Hello")
+        word2 = MagicMock(start=0.5, end=1.0, word=" world")
+        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello world", words=[word1, word2])
+        mock_info = MagicMock(duration=5.0)
+        mock_model.transcribe.return_value = ([seg1], mock_info)
+
+        import numpy as np
+        cluster_embs = {"Speaker 1": np.array([0.1] * 192)}
+        mock_diarize.return_value = DiarizationResult(
+            segments=[SpeakerSegment(0.0, 5.0, "Speaker 1")],
+            cluster_embeddings=cluster_embs,
+        )
+        mock_assign_words.return_value = [("Speaker 1", 0.0, "Hello world")]
+
+        result, embeddings = transcribe_audio(
+            audio_path=Path("/fake/recording.flac"),
+            model_name="base",
+            meeting_name="Standup",
+            meeting_date="2026-04-06",
+            enable_diarization=True,
+        )
+
+        # Verify word_timestamps was enabled
+        call_kwargs = mock_model.transcribe.call_args[1]
+        assert call_kwargs.get("word_timestamps") is True
+
+        # Verify word-level assignment was used
+        mock_assign_words.assert_called_once()
+        assert "Speaker 1" in result
+        assert "[00:00:00] Hello world" in result
+
+    @patch("meetscribe.transcription.whisper._load_model")
+    def test_no_word_timestamps_without_diarization(self, mock_load):
+        """word_timestamps should not be enabled when diarization is off."""
+        mock_model = MagicMock()
+        mock_load.return_value = mock_model
+        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello.")
+        mock_info = MagicMock(duration=5.0)
+        mock_model.transcribe.return_value = ([seg1], mock_info)
+
+        transcribe_audio(
+            audio_path=Path("/fake/recording.flac"),
+            model_name="base",
+            meeting_name="Standup",
+            meeting_date="2026-04-06",
+            enable_diarization=False,
+        )
+
+        call_kwargs = mock_model.transcribe.call_args[1]
+        assert call_kwargs.get("word_timestamps") is not True
+
+    @patch("meetscribe.transcription.whisper._load_model")
+    @patch("meetscribe.transcription.diarize.diarize")
+    @patch("meetscribe.transcription.diarize.assign_speakers_to_transcript")
+    def test_falls_back_without_words(self, mock_assign_seg, mock_diarize, mock_load):
+        """Falls back to segment-level assignment when words are missing."""
+        from meetscribe.transcription.diarize import DiarizationResult, SpeakerSegment
+
+        mock_model = MagicMock()
+        mock_load.return_value = mock_model
+
+        seg1 = MagicMock(start=0.0, end=5.0, text=" Hello.", words=None)
+        mock_info = MagicMock(duration=5.0)
+        mock_model.transcribe.return_value = ([seg1], mock_info)
+
+        import numpy as np
+        cluster_embs = {"Speaker 1": np.array([0.1] * 192)}
+        mock_diarize.return_value = DiarizationResult(
+            segments=[SpeakerSegment(0.0, 5.0, "Speaker 1")],
+            cluster_embeddings=cluster_embs,
+        )
+        mock_assign_seg.return_value = [("Speaker 1", "Hello.")]
+
+        transcribe_audio(
+            audio_path=Path("/fake/recording.flac"),
+            model_name="base",
+            meeting_name="Standup",
+            meeting_date="2026-04-06",
+            enable_diarization=True,
+        )
+
+        mock_assign_seg.assert_called_once()

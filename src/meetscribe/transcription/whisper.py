@@ -146,6 +146,7 @@ def transcribe_audio(
     segments, info = model.transcribe(
         str(audio_path), beam_size=5, vad_filter=True, language="en",
         initial_prompt=initial_prompt,
+        word_timestamps=enable_diarization,
     )
     log.info("Transcribe call returned (generator ready) in %.1fs", _time.monotonic() - t1)
 
@@ -170,9 +171,28 @@ def transcribe_audio(
     cluster_embeddings = None
     if enable_diarization:
         log.info("Running speaker diarization...")
-        from meetscribe.transcription.diarize import diarize, assign_speakers_to_transcript
+        from meetscribe.transcription.diarize import (
+            diarize, assign_speakers_to_transcript, assign_speakers_to_words,
+        )
         diarization_result = diarize(audio_path, num_speakers=num_speakers)
-        speaker_labels = assign_speakers_to_transcript(segment_list, diarization_result.segments)
+
+        # Collect word-level timestamps if available
+        all_words = []
+        has_words = True
+        for seg in segment_list:
+            if seg.words:
+                all_words.extend(seg.words)
+            else:
+                has_words = False
+                break
+
+        if has_words and all_words:
+            speaker_labels = assign_speakers_to_words(all_words, diarization_result.segments)
+            log.info("Word-level diarization: %d word groups", len(speaker_labels))
+        else:
+            speaker_labels = assign_speakers_to_transcript(segment_list, diarization_result.segments)
+            log.info("Segment-level diarization fallback: %d segments", len(speaker_labels))
+
         cluster_embeddings = {
             label: emb.tolist() for label, emb in diarization_result.cluster_embeddings.items()
         }
