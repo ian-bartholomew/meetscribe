@@ -226,6 +226,12 @@ def assign_speakers_to_words(
                 best_overlap = overlap
                 best_speaker = sseg.speaker
 
+        # If no overlap, assign to nearest speaker segment
+        if best_speaker == "Unknown" and speaker_segments:
+            word_mid = (w.start + w.end) / 2
+            nearest = min(speaker_segments, key=lambda s: min(abs(s.start - word_mid), abs(s.end - word_mid)))
+            best_speaker = nearest.speaker
+
         word_speakers.append((best_speaker, w.start, w.word.strip()))
 
     groups: list[tuple[str, float, str]] = []

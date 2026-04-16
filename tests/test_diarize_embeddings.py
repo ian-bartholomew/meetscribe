@@ -81,16 +81,16 @@ class TestAssignSpeakersToWords:
         assert len(result) == 1
         assert result[0] == ("Speaker 1", 0.0, "one two three four")
 
-    def test_word_with_no_overlap(self):
+    def test_word_with_no_overlap_uses_nearest(self):
+        """Words in gaps get assigned to the nearest speaker segment."""
         words = [
             _mock_word(0.0, 0.5, " hello"),
             _mock_word(10.0, 10.5, " orphan"),
         ]
         speaker_segments = [SpeakerSegment(0.0, 1.0, "Speaker 1")]
         result = assign_speakers_to_words(words, speaker_segments)
-        assert len(result) == 2
-        assert result[0] == ("Speaker 1", 0.0, "hello")
-        assert result[1] == ("Unknown", 10.0, "orphan")
+        assert len(result) == 1  # Both assigned to Speaker 1, grouped
+        assert result[0] == ("Speaker 1", 0.0, "hello orphan")
 
     def test_empty_words(self):
         result = assign_speakers_to_words([], [SpeakerSegment(0.0, 5.0, "Speaker 1")])
