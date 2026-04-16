@@ -28,7 +28,7 @@ def setup_logging(level: str = "INFO") -> None:
     # Keep third-party loggers quiet unless explicitly set to DEBUG
     noisy_loggers = [
         "markdown_it", "httpcore", "httpx", "asyncio",
-        "urllib3", "speechbrain", "torch",
+        "urllib3", "pyannote", "torch",
     ]
     third_party_level = logging.DEBUG if log_level == logging.DEBUG else logging.WARNING
     for name in noisy_loggers:

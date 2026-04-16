@@ -4,49 +4,16 @@ import numpy as np
 import pytest
 
 from meetscribe.transcription.diarize import (
-    _cluster_speakers,
-    DiarizationResult,
     SpeakerSegment,
+    DiarizationResult,
     assign_speakers_to_words,
+    diarize,
+    _get_hf_token,
 )
-
-
-class TestClusterSpeakersEmbeddings:
-    def test_returns_diarization_result(self):
-        """_cluster_speakers returns a DiarizationResult with segments and embeddings."""
-        emb_a = np.array([1.0] * 192)
-        emb_b = np.array([-1.0] * 192)
-        segments = [
-            (0.0, 5.0, emb_a),
-            (5.0, 10.0, emb_a),
-            (10.0, 15.0, emb_b),
-            (15.0, 20.0, emb_b),
-        ]
-        result = _cluster_speakers(segments, num_speakers=2)
-        assert isinstance(result, DiarizationResult)
-        assert len(result.segments) == 4
-        assert len(result.cluster_embeddings) == 2
-        for label, emb in result.cluster_embeddings.items():
-            assert emb.shape == (192,)
-            assert label.startswith("Speaker ")
-
-    def test_single_segment(self):
-        emb = np.array([1.0] * 192)
-        segments = [(0.0, 5.0, emb)]
-        result = _cluster_speakers(segments)
-        assert len(result.segments) == 1
-        assert len(result.cluster_embeddings) == 1
-        assert "Speaker 1" in result.cluster_embeddings
-
-    def test_empty_segments(self):
-        result = _cluster_speakers([])
-        assert result.segments == []
-        assert result.cluster_embeddings == {}
 
 
 def _mock_word(start, end, word):
     """Create a mock faster-whisper Word object."""
-    from unittest.mock import MagicMock
     w = MagicMock()
     w.start = start
     w.end = end
@@ -137,3 +104,89 @@ class TestAssignSpeakersToWords:
         speaker_segments = [SpeakerSegment(0.0, 10.0, "Speaker 1")]
         result = assign_speakers_to_words(words, speaker_segments)
         assert result[0][1] == 5.0
+
+
+class TestGetHfToken:
+    def test_reads_env_var(self, monkeypatch):
+        monkeypatch.setenv("HF_TOKEN", "hf_from_env")
+        assert _get_hf_token("") == "hf_from_env"
+
+    def test_falls_back_to_config(self, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        assert _get_hf_token("hf_from_config") == "hf_from_config"
+
+    def test_env_takes_precedence(self, monkeypatch):
+        monkeypatch.setenv("HF_TOKEN", "hf_from_env")
+        assert _get_hf_token("hf_from_config") == "hf_from_env"
+
+    def test_raises_when_missing(self, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        with pytest.raises(RuntimeError, match="HuggingFace token required"):
+            _get_hf_token("")
+
+
+class TestDiarize:
+    @patch("meetscribe.transcription.diarize._get_embedding_model")
+    @patch("meetscribe.transcription.diarize._get_pipeline")
+    @patch("meetscribe.transcription.diarize._get_hf_token")
+    def test_returns_diarization_result(self, mock_token, mock_pipeline_fn, mock_emb_fn):
+        from pathlib import Path
+
+        mock_token.return_value = "hf_fake"
+
+        mock_pipeline = MagicMock()
+        mock_pipeline_fn.return_value = mock_pipeline
+
+        mock_segment_1 = MagicMock()
+        mock_segment_1.start = 0.0
+        mock_segment_1.end = 5.0
+        mock_segment_2 = MagicMock()
+        mock_segment_2.start = 5.0
+        mock_segment_2.end = 10.0
+
+        mock_output = MagicMock()
+        mock_exclusive = MagicMock()
+        mock_exclusive.itertracks.return_value = [
+            (mock_segment_1, None, "SPEAKER_00"),
+            (mock_segment_2, None, "SPEAKER_01"),
+        ]
+        mock_output.exclusive_speaker_diarization = mock_exclusive
+        mock_pipeline.return_value = mock_output
+
+        mock_emb_model = MagicMock()
+        mock_emb_fn.return_value = mock_emb_model
+        mock_emb_model.return_value = np.random.randn(1, 512)
+
+        result = diarize(Path("/fake/audio.flac"), num_speakers=2)
+
+        assert isinstance(result, DiarizationResult)
+        assert len(result.segments) == 2
+        assert result.segments[0].speaker == "Speaker 1"
+        assert result.segments[1].speaker == "Speaker 2"
+        assert result.segments[0].start == 0.0
+        assert result.segments[1].start == 5.0
+        assert len(result.cluster_embeddings) == 2
+        mock_pipeline.assert_called_once()
+
+    @patch("meetscribe.transcription.diarize._get_embedding_model")
+    @patch("meetscribe.transcription.diarize._get_pipeline")
+    @patch("meetscribe.transcription.diarize._get_hf_token")
+    def test_passes_num_speakers(self, mock_token, mock_pipeline_fn, mock_emb_fn):
+        from pathlib import Path
+
+        mock_token.return_value = "hf_fake"
+        mock_pipeline = MagicMock()
+        mock_pipeline_fn.return_value = mock_pipeline
+
+        mock_output = MagicMock()
+        mock_exclusive = MagicMock()
+        mock_exclusive.itertracks.return_value = []
+        mock_output.exclusive_speaker_diarization = mock_exclusive
+        mock_pipeline.return_value = mock_output
+
+        mock_emb_fn.return_value = MagicMock()
+
+        diarize(Path("/fake/audio.flac"), num_speakers=3)
+
+        call_kwargs = mock_pipeline.call_args[1]
+        assert call_kwargs["num_speakers"] == 3
