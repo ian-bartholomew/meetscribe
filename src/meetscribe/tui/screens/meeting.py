@@ -29,7 +29,6 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import Screen
 from textual.widgets import (
     Button,
-    Checkbox,
     Collapsible,
     Footer,
     Header,
@@ -217,10 +216,8 @@ class MeetingScreen(Screen):
         return Vertical(
             Horizontal(
                 Select(model_options, value=default_model, id="whisper-model"),
-                Checkbox("Identify speakers", id="diarize-checkbox"),
                 Input(placeholder="# speakers", id="num-speakers", max_length=2),
                 Button("Transcribe", id="transcribe-btn", variant="primary"),
-                Button("Regenerate", id="regenerate-transcript-btn"),
                 Button("Edit", id="edit-transcript-btn"),
                 classes="controls-bar",
             ),
@@ -387,17 +384,14 @@ class MeetingScreen(Screen):
             btn.label = "Save"
 
     @on(Button.Pressed, "#transcribe-btn")
-    @on(Button.Pressed, "#regenerate-transcript-btn")
     def do_transcribe(self) -> None:
         model_select = self.query_one("#whisper-model", Select)
         model_name = str(model_select.value) if model_select.value != Select.BLANK else "base"
-        diarize = self.query_one("#diarize-checkbox", Checkbox).value
         num_speakers_str = self.query_one("#num-speakers", Input).value.strip()
         num_speakers = int(num_speakers_str) if num_speakers_str.isdigit() else None
-        # Persist num_speakers to metadata for future use
         if num_speakers:
             save_metadata(self.meeting.path, {"num_speakers": num_speakers})
-        self._run_transcription(model_name, diarize, num_speakers)
+        self._run_transcription(model_name, True, num_speakers)
 
     def _show_loading(self, widget_id: str) -> None:
         self.query_one(f"#{widget_id}").add_class("visible")

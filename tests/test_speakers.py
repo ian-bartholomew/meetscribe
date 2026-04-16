@@ -157,3 +157,70 @@ class TestSpeakerMatching:
         # Only one should match Alice
         alice_matches = [k for k, v in matches.items() if v.id == alice.id]
         assert len(alice_matches) <= 1
+
+
+class TestEmbeddingDimensionReset:
+    def test_resets_profiles_with_wrong_dimensions(self, registry_path):
+        """Profiles with old 192-dim embeddings should be cleared on load."""
+        data = {
+            "speakers": [
+                {
+                    "id": "sp_aaaaaa",
+                    "name": "Alice",
+                    "embeddings": [
+                        {
+                            "vector": [0.1] * 192,
+                            "source_meeting": "old-meeting",
+                            "created_at": "2026-04-15T10:00:00Z",
+                        }
+                    ],
+                    "created_at": "2026-04-15T10:00:00Z",
+                    "updated_at": "2026-04-15T10:00:00Z",
+                }
+            ],
+            "match_threshold": 0.65,
+        }
+        registry_path.write_text(json.dumps(data))
+        reg = SpeakerRegistry(registry_path)
+        assert reg.list_speakers() == []
+
+    def test_keeps_profiles_with_correct_dimensions(self, registry_path):
+        from meetscribe.storage.speakers import EMBEDDING_DIM
+        data = {
+            "speakers": [
+                {
+                    "id": "sp_aaaaaa",
+                    "name": "Alice",
+                    "embeddings": [
+                        {
+                            "vector": [0.1] * EMBEDDING_DIM,
+                            "source_meeting": "new-meeting",
+                            "created_at": "2026-04-15T10:00:00Z",
+                        }
+                    ],
+                    "created_at": "2026-04-15T10:00:00Z",
+                    "updated_at": "2026-04-15T10:00:00Z",
+                }
+            ],
+            "match_threshold": 0.65,
+        }
+        registry_path.write_text(json.dumps(data))
+        reg = SpeakerRegistry(registry_path)
+        assert len(reg.list_speakers()) == 1
+
+    def test_keeps_profiles_with_no_embeddings(self, registry_path):
+        data = {
+            "speakers": [
+                {
+                    "id": "sp_aaaaaa",
+                    "name": "Alice",
+                    "embeddings": [],
+                    "created_at": "2026-04-15T10:00:00Z",
+                    "updated_at": "2026-04-15T10:00:00Z",
+                }
+            ],
+            "match_threshold": 0.65,
+        }
+        registry_path.write_text(json.dumps(data))
+        reg = SpeakerRegistry(registry_path)
+        assert len(reg.list_speakers()) == 1
