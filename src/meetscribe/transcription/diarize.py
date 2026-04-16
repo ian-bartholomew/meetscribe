@@ -219,3 +219,56 @@ def assign_speakers_to_transcript(
         results.append((best_speaker, tseg.text.strip()))
 
     return results
+
+
+def assign_speakers_to_words(
+    words: list,
+    speaker_segments: list[SpeakerSegment],
+) -> list[tuple[str, float, str]]:
+    """Assign speakers to individual words and group consecutive same-speaker words.
+
+    Args:
+        words: faster-whisper Word objects with .start, .end, .word
+        speaker_segments: diarization results
+
+    Returns:
+        List of (speaker_label, start_time, text) tuples. Each tuple is a group
+        of consecutive words from the same speaker.
+    """
+    if not words:
+        return []
+
+    # Assign each word to a speaker
+    word_speakers: list[tuple[str, float, str]] = []
+    for w in words:
+        best_speaker = "Unknown"
+        best_overlap = 0.0
+
+        for sseg in speaker_segments:
+            overlap_start = max(w.start, sseg.start)
+            overlap_end = min(w.end, sseg.end)
+            overlap = max(0.0, overlap_end - overlap_start)
+
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = sseg.speaker
+
+        word_speakers.append((best_speaker, w.start, w.word.strip()))
+
+    # Group consecutive same-speaker words into lines
+    groups: list[tuple[str, float, str]] = []
+    current_speaker = word_speakers[0][0]
+    current_start = word_speakers[0][1]
+    current_words: list[str] = [word_speakers[0][2]]
+
+    for speaker, start, word in word_speakers[1:]:
+        if speaker == current_speaker:
+            current_words.append(word)
+        else:
+            groups.append((current_speaker, current_start, " ".join(current_words)))
+            current_speaker = speaker
+            current_start = start
+            current_words = [word]
+
+    groups.append((current_speaker, current_start, " ".join(current_words)))
+    return groups
