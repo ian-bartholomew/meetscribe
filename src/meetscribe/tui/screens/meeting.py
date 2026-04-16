@@ -47,7 +47,9 @@ from textual.widgets import (
 from meetscribe.storage.vault import MeetingInfo, MeetingStorage, load_metadata, save_metadata
 from meetscribe.storage.speakers import SpeakerRegistry, match_speakers, rewrite_transcript
 from meetscribe.config import CONFIG_DIR
-from meetscribe.transcription.whisper import AVAILABLE_MODELS
+from meetscribe.transcription.whisper import AVAILABLE_MODELS, format_timestamp
+from meetscribe.audio.player import AudioPlayer
+from meetscribe.tui.widgets.clickable_richlog import ClickableRichLog
 
 # Dark background colors that work well with white text
 SPEAKER_COLORS = [
@@ -64,13 +66,22 @@ SPEAKER_COLORS = [
 ]
 
 
-def _write_transcript_to_richlog(richlog: RichLog, content: str) -> None:
+def _parse_timestamp_seconds(ts_str: str) -> float | None:
+    """Parse [HH:MM:SS] to seconds. Returns None if not a valid timestamp."""
+    m = re.match(r"\[(\d{2}):(\d{2}):(\d{2})\]", ts_str)
+    if not m:
+        return None
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+
+
+def _write_transcript_to_richlog(richlog: ClickableRichLog | RichLog, content: str) -> None:
     """Parse transcript markdown and write speaker-colored lines to a RichLog."""
     richlog.clear()
 
     # Build speaker → color mapping from order of appearance
     speaker_color_map: dict[str, str] = {}
     current_speaker: str | None = None
+    use_timestamps = isinstance(richlog, ClickableRichLog)
 
     for line in content.splitlines():
         stripped = line.strip()
@@ -93,7 +104,11 @@ def _write_transcript_to_richlog(richlog: RichLog, content: str) -> None:
             # Transcript line with timestamp
             bg = speaker_color_map[current_speaker]
             text = Text(f" {stripped}", style=f"white on {bg}")
-            richlog.write(text)
+            ts = _parse_timestamp_seconds(stripped)
+            if use_timestamps and ts is not None:
+                richlog.write_with_timestamp(text, ts)
+            else:
+                richlog.write(text)
         elif not current_speaker:
             # Non-diarized transcript or other content
             richlog.write(Text(stripped))
@@ -151,6 +166,15 @@ class MeetingScreen(Screen):
     #transcript-editor {
         height: 1fr;
     }
+    #playback-controls {
+        height: 3;
+        dock: bottom;
+    }
+    #playback-position {
+        width: auto;
+        content-align-vertical: middle;
+        margin-left: 1;
+    }
     """
 
     BINDINGS = [
@@ -163,6 +187,7 @@ class MeetingScreen(Screen):
         super().__init__()
         self.meeting = meeting
         self._pending_cluster_embeddings: dict[str, list[float]] | None = None
+        self._player: AudioPlayer | None = None
         self._speaker_labels: list[str] = []
 
     def compose(self) -> ComposeResult:
@@ -229,8 +254,13 @@ class MeetingScreen(Screen):
                 collapsed=True,
             ),
             LoadingIndicator(id="transcript-loading"),
-            RichLog(id="transcript-view", highlight=False, markup=False),
+            ClickableRichLog(id="transcript-view", highlight=False, markup=False),
             TextArea(id="transcript-editor"),
+            Horizontal(
+                Button("Stop", id="playback-stop-btn", variant="error"),
+                Label("00:00:00", id="playback-position"),
+                id="playback-controls",
+            ),
         )
 
     def _compose_summary_tab(self) -> Vertical:
@@ -260,6 +290,7 @@ class MeetingScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#speaker-mapping", Collapsible).display = False
         self.query_one("#transcript-editor", TextArea).display = False
+        self.query_one("#playback-controls").display = False
         self._load_existing_transcript()
         self._load_existing_summary()
         self._load_memos()
@@ -295,7 +326,7 @@ class MeetingScreen(Screen):
         """Load the most recent transcript if one exists."""
         for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
             content = f.read_text()
-            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), content)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", ClickableRichLog), content)
             break
 
     def _load_existing_summary(self) -> None:
@@ -355,7 +386,7 @@ class MeetingScreen(Screen):
     def do_toggle_edit_transcript(self) -> None:
         """Toggle between colored view and editable text editor."""
         btn = self.query_one("#edit-transcript-btn", Button)
-        richlog = self.query_one("#transcript-view", RichLog)
+        richlog = self.query_one("#transcript-view", ClickableRichLog)
         editor = self.query_one("#transcript-editor", TextArea)
 
         if editor.display:
@@ -382,6 +413,43 @@ class MeetingScreen(Screen):
             richlog.display = False
             editor.display = True
             btn.label = "Save"
+
+    @on(ClickableRichLog.LineClicked)
+    def handle_line_clicked(self, event: ClickableRichLog.LineClicked) -> None:
+        """Start audio playback from the clicked transcript line's timestamp."""
+        recording_path = self._find_recording()
+        if not recording_path:
+            self.notify("No recording found.", severity="error")
+            return
+
+        # Stop any existing playback
+        if self._player is not None:
+            self._player.stop()
+
+        self._player = AudioPlayer(recording_path)
+        self._player.play(offset_seconds=event.timestamp_seconds)
+        self.query_one("#playback-controls").display = True
+        self._refresh_playback_display()
+
+    @on(Button.Pressed, "#playback-stop-btn")
+    def do_stop_playback(self) -> None:
+        """Stop audio playback and hide controls."""
+        if self._player is not None:
+            self._player.stop()
+            self._player = None
+        self.query_one("#playback-controls").display = False
+
+    @work(exclusive=True)
+    async def _refresh_playback_display(self) -> None:
+        """Poll playback position and update the display."""
+        import asyncio
+        position_label = self.query_one("#playback-position", Label)
+        while self._player is not None and self._player.is_playing:
+            pos = self._player.current_position
+            position_label.update(format_timestamp(pos))
+            await asyncio.sleep(0.25)
+        # Playback ended naturally
+        self.query_one("#playback-controls").display = False
 
     @on(Button.Pressed, "#transcribe-btn")
     def do_transcribe(self) -> None:
@@ -427,7 +495,7 @@ class MeetingScreen(Screen):
             def on_segment(idx: int, timestamp: str, text: str) -> None:
                 live_lines.append(f"[{timestamp}] {text}")
                 self.app.call_from_thread(
-                    self.query_one("#transcript-view", RichLog).write, f"[{timestamp}] {text}"
+                    self.query_one("#transcript-view", ClickableRichLog).write, f"[{timestamp}] {text}"
                 )
 
             transcript, cluster_embeddings = transcribe_audio(
@@ -447,7 +515,7 @@ class MeetingScreen(Screen):
 
             self._pending_cluster_embeddings = cluster_embeddings
             self.app.call_from_thread(
-                _write_transcript_to_richlog, self.query_one("#transcript-view", RichLog), transcript
+                _write_transcript_to_richlog, self.query_one("#transcript-view", ClickableRichLog), transcript
             )
 
             if not cluster_embeddings:
@@ -564,7 +632,7 @@ class MeetingScreen(Screen):
             transcript_text = transcripts[0].read_text()
             updated = rewrite_transcript(transcript_text, rewrite_map)
             transcripts[0].write_text(updated)
-            _write_transcript_to_richlog(self.query_one("#transcript-view", RichLog), updated)
+            _write_transcript_to_richlog(self.query_one("#transcript-view", ClickableRichLog), updated)
         save_metadata(self.meeting.path, {"speaker_map": speaker_map})
         for widget in collapsible.query(".match-indicator"):
             widget.update("")
@@ -724,4 +792,7 @@ class MeetingScreen(Screen):
         self.app.pop_screen()
 
     def action_go_back(self) -> None:
+        if self._player is not None:
+            self._player.stop()
+            self._player = None
         self.app.pop_screen()
