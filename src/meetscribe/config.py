@@ -52,6 +52,7 @@ class MeetscribeConfig:
     summarization: SummarizationConfig = field(default_factory=SummarizationConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
     log_level: str = "INFO"
+    huggingface_token: str = ""
 
 
 def default_config() -> MeetscribeConfig:
@@ -63,6 +64,7 @@ def _config_to_dict(cfg: MeetscribeConfig) -> dict[str, Any]:
     # to avoid TOML parsing it as part of that section
     return {
         "log_level": cfg.log_level,
+        "huggingface_token": cfg.huggingface_token,
         "vault": {
             "root": cfg.vault.root,
             "meetings_folder": cfg.vault.meetings_folder,
@@ -102,6 +104,8 @@ def _dict_to_config(data: dict[str, Any]) -> MeetscribeConfig:
         )
     if "log_level" in data:
         cfg.log_level = data["log_level"]
+    if "huggingface_token" in data:
+        cfg.huggingface_token = data["huggingface_token"]
     return cfg
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+log = logging.getLogger("meetscribe.speakers")
 
 
 @dataclass
@@ -28,6 +31,7 @@ class SpeakerProfile:
 
 
 MAX_EMBEDDINGS_PER_SPEAKER = 10
+EMBEDDING_DIM = 512
 
 
 def _generate_id() -> str:
@@ -67,6 +71,14 @@ class SpeakerRegistry:
                     created_at=s.get("created_at", ""),
                     updated_at=s.get("updated_at", ""),
                 ))
+            # Validate embedding dimensions — reset if model changed
+            for speaker in self._speakers:
+                for emb in speaker.embeddings:
+                    if len(emb.vector) != EMBEDDING_DIM:
+                        log.warning("Speaker profiles reset — embedding model changed.")
+                        self._speakers = []
+                        self._save()
+                        return
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

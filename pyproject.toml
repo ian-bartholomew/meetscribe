@@ -17,6 +17,7 @@ dependencies = [
     "tomli>=2.0.0;python_version<'3.11'",
     "tomli-w>=1.0.0",
     "numpy>=1.24.0",
+    "pyannote.audio>=3.3.0",
 ]
 
 [project.scripts]

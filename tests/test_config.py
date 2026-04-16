@@ -46,3 +46,29 @@ class TestSaveAndLoadConfig:
         cfg = load_config(config_file)
         assert cfg.vault.root == ""
         assert cfg.audio.device_name == "BlackHole 2ch"
+
+
+class TestHuggingFaceToken:
+    def test_default_is_empty(self):
+        cfg = default_config()
+        assert cfg.huggingface_token == ""
+
+    def test_roundtrip(self, config_file):
+        cfg = default_config()
+        cfg.huggingface_token = "hf_test123"
+        save_config(cfg, config_file)
+        loaded = load_config(config_file)
+        assert loaded.huggingface_token == "hf_test123"
+
+    def test_load_old_config_without_token(self, config_file):
+        """Config files from before this field should load with empty default."""
+        cfg = default_config()
+        save_config(cfg, config_file)
+        content = config_file.read_text()
+        content = "\n".join(
+            line for line in content.splitlines()
+            if "huggingface_token" not in line
+        )
+        config_file.write_text(content)
+        loaded = load_config(config_file)
+        assert loaded.huggingface_token == ""
