@@ -68,11 +68,10 @@ def _get_embedding_model(hf_token: str):
     """Load and cache the pyannote speaker embedding model."""
     global _embedding_model
     if _embedding_model is None:
-        from pyannote.audio.pipelines import SpeakerEmbedding
+        from pyannote.audio import Model, Inference
         log.info("Loading pyannote embedding model...")
-        _embedding_model = SpeakerEmbedding(
-            embedding="pyannote/embedding", token=hf_token
-        )
+        model = Model.from_pretrained("pyannote/embedding", token=hf_token)
+        _embedding_model = Inference(model, window="whole")
     return _embedding_model
 
 
@@ -127,7 +126,12 @@ def diarize(
 
     # Extract per-speaker embeddings from longest segment
     cluster_embeddings: dict[str, np.ndarray] = {}
-    embedding_model = _get_embedding_model(hf_token)
+    try:
+        embedding_model = _get_embedding_model(hf_token)
+    except Exception:
+        log.warning("Could not load embedding model — speaker profiles will not be updated")
+        log.info("Accept model terms at https://hf.co/pyannote/embedding to enable speaker recognition")
+        return DiarizationResult(segments=segments, cluster_embeddings=cluster_embeddings)
     waveform = audio_input["waveform"]
     sample_rate = audio_input["sample_rate"]
     for pyannote_label, our_label in label_map.items():
