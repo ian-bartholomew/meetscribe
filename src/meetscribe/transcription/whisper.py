@@ -55,12 +55,14 @@ def format_transcript(
     meeting_date: str,
     model: str,
     duration: str,
-    speaker_labels: list[tuple[str, str]] | None = None,
+    speaker_labels: list | None = None,
 ) -> str:
     """Format transcription segments into a markdown document with frontmatter.
 
-    If speaker_labels is provided, uses (speaker, text) tuples instead of
-    raw segments for the body.
+    speaker_labels can be:
+      - list[tuple[str, str]]: (speaker, text) — segment-level, uses segments for timestamps
+      - list[tuple[str, float, str]]: (speaker, start_time, text) — word-level, timestamps embedded
+      - None: no diarization, uses segments directly
     """
     lines = [
         "---",
@@ -74,8 +76,13 @@ def format_transcript(
 
     if speaker_labels:
         prev_speaker = None
-        for i, (speaker, text) in enumerate(speaker_labels):
-            timestamp = format_timestamp(segments[i].start)
+        for i, entry in enumerate(speaker_labels):
+            if len(entry) == 3:
+                speaker, start_time, text = entry
+                timestamp = format_timestamp(start_time)
+            else:
+                speaker, text = entry
+                timestamp = format_timestamp(segments[i].start)
             if speaker != prev_speaker:
                 lines.append(f"**{speaker}:**")
                 prev_speaker = speaker

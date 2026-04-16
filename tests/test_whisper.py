@@ -76,6 +76,50 @@ class TestTranscribeAudio:
         assert call_args[1] == {"device": "cpu", "compute_type": "int8"}
 
 
+class TestFormatTranscriptWordLevel:
+    def test_formats_with_word_level_speaker_labels(self):
+        """3-tuple speaker_labels (speaker, timestamp, text) render correctly."""
+        segments = []  # Not used when word-level labels provided
+        speaker_labels = [
+            ("Speaker 1", 0.0, "hello from me"),
+            ("Speaker 2", 2.0, "hi back"),
+            ("Speaker 1", 4.0, "great"),
+        ]
+        result = format_transcript(
+            segments=segments,
+            meeting_name="Standup",
+            meeting_date="2026-04-06",
+            model="base",
+            duration="00:10:00",
+            speaker_labels=speaker_labels,
+        )
+        assert "**Speaker 1:**" in result
+        assert "[00:00:00] hello from me" in result
+        assert "**Speaker 2:**" in result
+        assert "[00:00:02] hi back" in result
+        assert "[00:00:04] great" in result
+
+    def test_speaker_grouping_in_output(self):
+        """Consecutive lines from same speaker don't repeat the header."""
+        segments = []
+        speaker_labels = [
+            ("Speaker 1", 0.0, "first line"),
+            ("Speaker 1", 1.0, "second line"),
+            ("Speaker 2", 3.0, "other speaker"),
+        ]
+        result = format_transcript(
+            segments=segments,
+            meeting_name="Test",
+            meeting_date="2026-04-06",
+            model="base",
+            duration="00:05:00",
+            speaker_labels=speaker_labels,
+        )
+        assert result.count("**Speaker 1:**") == 1
+        assert "[00:00:00] first line" in result
+        assert "[00:00:01] second line" in result
+
+
 class TestTranscribeAudioDiarization:
     @patch("meetscribe.transcription.whisper._load_model")
     @patch("meetscribe.transcription.diarize.diarize")
