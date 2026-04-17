@@ -57,7 +57,7 @@ class AudioPlayer:
                 outdata[:] = 0
                 raise sd.CallbackStop()
 
-            data = self._sf.read(frames, dtype="float32")
+            data = self._sf.read(frames, dtype="float32", always_2d=True)
             if len(data) == 0:
                 outdata[:] = 0
                 raise sd.CallbackStop()
