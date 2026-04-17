@@ -37,6 +37,14 @@ Hidden by default. Shows on playback start, hides on stop or end-of-file.
 - Click different line while playing → stop current, start from new timestamp
 - Leave screen (Escape) → stop any active playback
 
+## Existing Code to Address
+
+The previous implementation attempt (commit `a4f7ac7`) left code that needs updating:
+
+- **`src/meetscribe/audio/player.py`** — Keep as-is, AudioPlayer works correctly
+- **`src/meetscribe/tui/widgets/clickable_richlog.py`** — Delete, replaced by ListView approach
+- **`src/meetscribe/tui/screens/meeting.py`** — Already has playback handlers, controls CSS, and cleanup. Update to use `ListView.Selected` instead of `ClickableRichLog.LineClicked`, and replace transcript rendering
+
 ## Files to Modify
 
 | File | Change |
@@ -48,12 +56,13 @@ Hidden by default. Shows on playback start, hides on stop or end-of-file.
 ## Key Changes in meeting.py
 
 1. Replace `ClickableRichLog` import with `ListView`, `ListItem` from textual.widgets
-2. Rewrite `_write_transcript_to_richlog` → new function that clears and mounts ListItems into a ListView
+2. Replace `_write_transcript_to_richlog` with `_build_transcript_items` that returns `list[ListItem]`, and `_populate_transcript_view` that clears and mounts them
 3. Swap `ClickableRichLog(...)` for `ListView(id="transcript-view")` in compose
-4. Change `handle_line_clicked` to handle `ListView.Selected` — read timestamp from `event.item`
+4. Change `handle_line_clicked` to handle `ListView.Selected` — read `timestamp_seconds` attribute from `event.item`
 5. Update edit toggle to swap ListView/TextArea instead of RichLog/TextArea
 6. Update live transcription streaming to append ListItems
 7. Playback controls, stop handler, position refresh worker, cleanup on exit — already partially implemented, update to use ListView
+8. Each `ListItem` stores `timestamp_seconds` as an attribute for timestamp lines. Speaker headers have no timestamp attribute (clicks on them are ignored).
 
 ## Testing
 
