@@ -34,9 +34,10 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    ListItem,
+    ListView,
     LoadingIndicator,
     Markdown,
-    RichLog,
     Select,
     Static,
     TabPane,
@@ -49,7 +50,6 @@ from meetscribe.storage.speakers import SpeakerRegistry, match_speakers, rewrite
 from meetscribe.config import CONFIG_DIR
 from meetscribe.transcription.whisper import AVAILABLE_MODELS, format_timestamp
 from meetscribe.audio.player import AudioPlayer
-from meetscribe.tui.widgets.clickable_richlog import ClickableRichLog
 
 # Dark background colors that work well with white text
 SPEAKER_COLORS = [
@@ -74,44 +74,42 @@ def _parse_timestamp_seconds(ts_str: str) -> float | None:
     return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
 
 
-def _write_transcript_to_richlog(richlog: ClickableRichLog | RichLog, content: str) -> None:
-    """Parse transcript markdown and write speaker-colored lines to a RichLog."""
-    richlog.clear()
-
-    # Build speaker → color mapping from order of appearance
+def _build_transcript_items(content: str) -> list[ListItem]:
+    """Parse transcript markdown and return styled ListItems."""
+    items: list[ListItem] = []
     speaker_color_map: dict[str, str] = {}
     current_speaker: str | None = None
-    use_timestamps = isinstance(richlog, ClickableRichLog)
 
     for line in content.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
 
-        # Detect speaker header: **Name:**
         if stripped.startswith("**") and stripped.endswith(":**"):
             speaker_name = stripped[2:-3]
             if speaker_name not in speaker_color_map:
                 idx = len(speaker_color_map) % len(SPEAKER_COLORS)
                 speaker_color_map[speaker_name] = SPEAKER_COLORS[idx]
             current_speaker = speaker_name
-            text = Text(f"\n{speaker_name}", style=f"bold white on {speaker_color_map[speaker_name]}")
-            richlog.write(text)
+            item = ListItem(
+                Static(Text(f" {speaker_name}", style=f"bold white on {speaker_color_map[speaker_name]}"))
+            )
+            items.append(item)
         elif stripped.startswith("---") or stripped.startswith("meeting:") or stripped.startswith("date:") or stripped.startswith("model:") or stripped.startswith("duration:"):
-            # Skip frontmatter
             continue
         elif current_speaker and stripped.startswith("["):
-            # Transcript line with timestamp
             bg = speaker_color_map[current_speaker]
-            text = Text(f" {stripped}", style=f"white on {bg}")
             ts = _parse_timestamp_seconds(stripped)
-            if use_timestamps and ts is not None:
-                richlog.write_with_timestamp(text, ts)
-            else:
-                richlog.write(text)
+            item = ListItem(
+                Static(Text(f" {stripped}", style=f"white on {bg}"))
+            )
+            if ts is not None:
+                item.timestamp_seconds = ts
+            items.append(item)
         elif not current_speaker:
-            # Non-diarized transcript or other content
-            richlog.write(Text(stripped))
+            items.append(ListItem(Static(stripped)))
+
+    return items
 
 
 class MeetingScreen(Screen):
@@ -254,7 +252,7 @@ class MeetingScreen(Screen):
                 collapsed=True,
             ),
             LoadingIndicator(id="transcript-loading"),
-            ClickableRichLog(id="transcript-view", highlight=False, markup=False),
+            ListView(id="transcript-view"),
             TextArea(id="transcript-editor"),
             Horizontal(
                 Button("Stop", id="playback-stop-btn", variant="error"),
@@ -326,8 +324,16 @@ class MeetingScreen(Screen):
         """Load the most recent transcript if one exists."""
         for f in sorted(self.meeting.path.glob("transcript-*.md"), reverse=True):
             content = f.read_text()
-            _write_transcript_to_richlog(self.query_one("#transcript-view", ClickableRichLog), content)
+            self._populate_transcript_view(content)
             break
+
+    def _populate_transcript_view(self, content: str) -> None:
+        """Parse transcript and populate the ListView with styled items."""
+        listview = self.query_one("#transcript-view", ListView)
+        listview.clear()
+        items = _build_transcript_items(content)
+        for item in items:
+            listview.append(item)
 
     def _load_existing_summary(self) -> None:
         """Load the most recent summary if one exists."""
@@ -386,7 +392,7 @@ class MeetingScreen(Screen):
     def do_toggle_edit_transcript(self) -> None:
         """Toggle between colored view and editable text editor."""
         btn = self.query_one("#edit-transcript-btn", Button)
-        richlog = self.query_one("#transcript-view", ClickableRichLog)
+        listview = self.query_one("#transcript-view", ListView)
         editor = self.query_one("#transcript-editor", TextArea)
 
         if editor.display:
@@ -395,12 +401,11 @@ class MeetingScreen(Screen):
             transcripts = sorted(self.meeting.path.glob("transcript-*.md"), reverse=True)
             if transcripts:
                 transcripts[0].write_text(updated_text)
-            _write_transcript_to_richlog(richlog, updated_text)
+            self._populate_transcript_view(updated_text)
             editor.display = False
-            richlog.display = True
+            listview.display = True
             btn.label = "Edit"
             self.notify("Transcript saved.")
-            # Re-detect speakers in case labels changed
             self._detect_speakers_from_transcript()
         else:
             # Load transcript into editor
@@ -410,13 +415,18 @@ class MeetingScreen(Screen):
                 return
             content = transcripts[0].read_text()
             editor.load_text(content)
-            richlog.display = False
+            listview.display = False
             editor.display = True
             btn.label = "Save"
 
-    @on(ClickableRichLog.LineClicked)
-    def handle_line_clicked(self, event: ClickableRichLog.LineClicked) -> None:
+    @on(ListView.Selected, "#transcript-view")
+    def handle_line_clicked(self, event: ListView.Selected) -> None:
         """Start audio playback from the clicked transcript line's timestamp."""
+        item = event.item
+        ts = getattr(item, "timestamp_seconds", None)
+        if ts is None:
+            return  # Speaker header or non-timestamp line
+
         recording_path = self._find_recording()
         if not recording_path:
             self.notify("No recording found.", severity="error")
@@ -427,7 +437,7 @@ class MeetingScreen(Screen):
             self._player.stop()
 
         self._player = AudioPlayer(recording_path)
-        self._player.play(offset_seconds=event.timestamp_seconds)
+        self._player.play(offset_seconds=ts)
         self.query_one("#playback-controls").display = True
         self._refresh_playback_display()
 
@@ -494,8 +504,9 @@ class MeetingScreen(Screen):
 
             def on_segment(idx: int, timestamp: str, text: str) -> None:
                 live_lines.append(f"[{timestamp}] {text}")
+                item = ListItem(Static(f"[{timestamp}] {text}"))
                 self.app.call_from_thread(
-                    self.query_one("#transcript-view", ClickableRichLog).write, f"[{timestamp}] {text}"
+                    self.query_one("#transcript-view", ListView).append, item
                 )
 
             transcript, cluster_embeddings = transcribe_audio(
@@ -514,9 +525,7 @@ class MeetingScreen(Screen):
             log.info("Transcription saved to %s", transcript_path)
 
             self._pending_cluster_embeddings = cluster_embeddings
-            self.app.call_from_thread(
-                _write_transcript_to_richlog, self.query_one("#transcript-view", ClickableRichLog), transcript
-            )
+            self.app.call_from_thread(self._populate_transcript_view, transcript)
 
             if not cluster_embeddings:
                 # Clear stale speaker mapping if re-transcribing without diarization
@@ -632,7 +641,7 @@ class MeetingScreen(Screen):
             transcript_text = transcripts[0].read_text()
             updated = rewrite_transcript(transcript_text, rewrite_map)
             transcripts[0].write_text(updated)
-            _write_transcript_to_richlog(self.query_one("#transcript-view", ClickableRichLog), updated)
+            self._populate_transcript_view(updated)
         save_metadata(self.meeting.path, {"speaker_map": speaker_map})
         for widget in collapsible.query(".match-indicator"):
             widget.update("")
