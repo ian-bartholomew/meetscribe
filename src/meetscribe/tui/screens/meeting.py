@@ -90,6 +90,8 @@ def _build_transcript_items(content: str) -> list[ListItem]:
             if speaker_name not in speaker_color_map:
                 idx = len(speaker_color_map) % len(SPEAKER_COLORS)
                 speaker_color_map[speaker_name] = SPEAKER_COLORS[idx]
+            if current_speaker is not None:
+                items.append(ListItem(Static(" ")))
             current_speaker = speaker_name
             item = ListItem(
                 Static(Text(f" {speaker_name}", style=f"bold white on {speaker_color_map[speaker_name]}"))

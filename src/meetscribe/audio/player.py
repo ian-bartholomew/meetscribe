@@ -78,6 +78,7 @@ class AudioPlayer:
             self._stream = sd.OutputStream(
                 samplerate=self._sample_rate,
                 channels=channels,
+                blocksize=4096,
                 callback=callback,
                 finished_callback=finished,
             )
