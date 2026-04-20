@@ -80,10 +80,7 @@ class MeetingStorage:
     def meeting_dir(self, name: str, meeting_date: date) -> Path:
         return (
             self.meetings_root
-            / f"{meeting_date.year}"
-            / f"{meeting_date.month:02d}"
-            / f"{meeting_date.day:02d}"
-            / slugify(name)
+            / f"{meeting_date.year}-{meeting_date.month:02d}-{meeting_date.day:02d}-{slugify(name)}"
         )
 
     def ensure_meeting_dir(self, name: str, meeting_date: date) -> Path:
@@ -119,7 +116,8 @@ class MeetingStorage:
 
     def rename_meeting(self, meeting: MeetingInfo, new_name: str) -> MeetingInfo:
         """Rename a meeting by moving its directory. Returns updated MeetingInfo."""
-        new_dir = meeting.path.parent / slugify(new_name)
+        d = meeting.date
+        new_dir = meeting.path.parent / f"{d.year}-{d.month:02d}-{d.day:02d}-{slugify(new_name)}"
         if new_dir.exists():
             raise ValueError(f"A meeting named '{new_name}' already exists on {meeting.date}")
         meeting.path.rename(new_dir)
@@ -134,39 +132,38 @@ class MeetingStorage:
         )
 
     def list_meetings(self) -> list[MeetingInfo]:
-        """Scan the meetings folder and return all meetings, newest first."""
+        """Scan the meetings folder and return all meetings, newest first.
+
+        Expects flat directory structure: YYYY-MM-DD-meeting-name/
+        """
         meetings: list[MeetingInfo] = []
         root = self.meetings_root
         if not root.exists():
             return meetings
 
-        for year_dir in sorted(root.iterdir(), reverse=True):
-            if not year_dir.is_dir() or not year_dir.name.isdigit():
+        for meeting_dir in sorted(root.iterdir(), reverse=True):
+            if not meeting_dir.is_dir():
                 continue
-            for month_dir in sorted(year_dir.iterdir(), reverse=True):
-                if not month_dir.is_dir() or not month_dir.name.isdigit():
-                    continue
-                for day_dir in sorted(month_dir.iterdir(), reverse=True):
-                    if not day_dir.is_dir() or not day_dir.name.isdigit():
-                        continue
-                    for meeting_dir in sorted(day_dir.iterdir(), reverse=True):
-                        if not meeting_dir.is_dir():
-                            continue
-                        meeting_date = date(
-                            int(year_dir.name),
-                            int(month_dir.name),
-                            int(day_dir.name),
-                        )
-                        files = {f.name for f in meeting_dir.iterdir()}
-                        duration = _get_recording_duration(meeting_dir, files)
-                        meetings.append(MeetingInfo(
-                            name=meeting_dir.name,
-                            date=meeting_date,
-                            path=meeting_dir,
-                            has_recording=any(f.startswith("recording.") for f in files),
-                            has_transcript=any(f.startswith("transcript-") for f in files),
-                            has_summary=any(f.startswith("summary-") for f in files),
-                            has_memos="memos.md" in files,
-                            duration=duration,
-                        ))
+            # Parse date from directory name: YYYY-MM-DD-slug
+            match = re.match(r"(\d{4})-(\d{2})-(\d{2})-(.+)", meeting_dir.name)
+            if not match:
+                continue
+            meeting_date = date(
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+            )
+            name = match.group(4)
+            files = {f.name for f in meeting_dir.iterdir()}
+            duration = _get_recording_duration(meeting_dir, files)
+            meetings.append(MeetingInfo(
+                name=name,
+                date=meeting_date,
+                path=meeting_dir,
+                has_recording=any(f.startswith("recording.") for f in files),
+                has_transcript=any(f.startswith("transcript-") for f in files),
+                has_summary=any(f.startswith("summary-") for f in files),
+                has_memos="memos.md" in files,
+                duration=duration,
+            ))
         return meetings
