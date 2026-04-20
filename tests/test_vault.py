@@ -8,17 +8,17 @@ from meetscribe.storage.vault import MeetingStorage, load_metadata, save_metadat
 
 @pytest.fixture
 def vault(tmp_path):
-    return MeetingStorage(vault_root=tmp_path, meetings_folder="Meetings")
+    return MeetingStorage(vault_root=tmp_path, meetings_folder="meetings")
 
 
 class TestMeetingPath:
     def test_creates_correct_path(self, vault, tmp_path):
         path = vault.meeting_dir("Weekly Standup", date(2026, 4, 6))
-        assert path == tmp_path / "Meetings" / "2026" / "04" / "06" / "weekly-standup"
+        assert path == tmp_path / "meetings" / "2026-04-06-weekly-standup"
 
     def test_slugifies_name(self, vault, tmp_path):
         path = vault.meeting_dir("Q2 Planning — Session #1", date(2026, 4, 6))
-        assert path == tmp_path / "Meetings" / "2026" / "04" / "06" / "q2-planning-session-1"
+        assert path == tmp_path / "meetings" / "2026-04-06-q2-planning-session-1"
 
 
 class TestEnsureMeetingDir:
@@ -63,6 +63,20 @@ class TestListMeetings:
         # Most recent first
         assert meetings[0].date == date(2026, 4, 6)
         assert meetings[-1].date == date(2026, 3, 15)
+
+    def test_parses_name_from_directory(self, vault):
+        vault.ensure_meeting_dir("Weekly Standup", date(2026, 4, 6))
+        meetings = vault.list_meetings()
+        assert len(meetings) == 1
+        assert meetings[0].name == "weekly-standup"
+        assert meetings[0].date == date(2026, 4, 6)
+
+    def test_ignores_non_date_directories(self, vault):
+        vault.ensure_meeting_dir("Standup", date(2026, 4, 6))
+        # Create a non-matching directory
+        (vault.meetings_root / "notes").mkdir(parents=True)
+        meetings = vault.list_meetings()
+        assert len(meetings) == 1
 
 
 class TestMetadataSpeakerMap:
