@@ -21,6 +21,7 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         ("n", "new_recording", "New Recording"),
+        ("f5", "refresh", "Refresh"),
         ("r", "rename_meeting", "Rename"),
         ("d", "delete_meeting", "Delete"),
         ("b", "bulk_process", "Bulk Process"),
@@ -43,6 +44,7 @@ class HomeScreen(Screen):
             Static("Meetscribe", classes="title"),
             Horizontal(
                 Button("New Recording", id="new-recording", variant="primary"),
+                Button("Refresh", id="refresh-meetings"),
                 Button("Bulk Process Missing", id="bulk-process"),
             ),
             DataTable(id="meeting-table", cursor_type="row"),
@@ -71,6 +73,11 @@ class HomeScreen(Screen):
                 "yes" if meeting.has_summary else "-",
                 key=f"{meeting.date}/{meeting.name}",
             )
+
+    @on(Button.Pressed, "#refresh-meetings")
+    def action_refresh(self) -> None:
+        self._refresh_meetings()
+        self.notify("Meetings refreshed.")
 
     @on(Button.Pressed, "#new-recording")
     def action_new_recording(self) -> None:
